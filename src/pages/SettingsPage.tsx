@@ -28,6 +28,7 @@ import {
   UserProfile,
 } from '../types';
 import { authFetch } from '../api';
+import { COLOR_PALETTES, ColorPaletteId } from '../themePalettes';
 
 type SettingsTab = 'account' | 'models' | 'apikeys' | 'offline' | 'preferences';
 
@@ -37,8 +38,10 @@ interface SettingsPageProps {
   modelCatalog: ModelPortalCatalogItem[];
   themeMode: 'clay' | 'liquid-glass';
   spatialFlow: 'calm' | 'dynamic';
+  paletteId: ColorPaletteId;
   onChangeTheme: (mode: 'clay' | 'liquid-glass') => void;
   onChangeSpatialFlow: (flow: 'calm' | 'dynamic') => void;
+  onChangePalette: (paletteId: ColorPaletteId) => void;
   onUpdateConfig: (partial: Partial<RagPipelineConfig>) => Promise<void>;
   onUserUpdated: (updated: UserProfile) => void;
   onLogout: () => Promise<void>;
@@ -77,8 +80,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   modelCatalog,
   themeMode,
   spatialFlow,
+  paletteId,
   onChangeTheme,
   onChangeSpatialFlow,
+  onChangePalette,
   onUpdateConfig,
   onUserUpdated,
   onLogout,
@@ -1218,53 +1223,158 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       )}
 
       {/* =====================================================================
-          TAB 5: APPEARANCE & PIPELINE DEFAULTS
+          TAB 5: APPEARANCE, COLOR PALETTES & PIPELINE DEFAULTS
       ===================================================================== */}
       {activeTab === 'preferences' && (
-        <div className="grid-2">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          {/* Curated 9-Palette Color Studio (Applies to BOTH Clay & Liquid Glass) */}
           <div className="clay-card">
-            <span className="clay-tag clay-tag-terracotta" style={{ marginBottom: 16 }}>
-              <span>STUDIO THEME &amp; SPATIAL MOTION</span>
-            </span>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div className="clay-card-alt">
-                <div
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 12,
+                marginBottom: 18,
+              }}
+            >
+              <div>
+                <span className="clay-tag clay-tag-terracotta">
+                  <span>COLOR PALETTE STUDIO (CLAY &amp; LIQUID GLASS)</span>
+                </span>
+                <h3
                   className="font-display"
-                  style={{ fontSize: '0.94rem', fontWeight: 700, marginBottom: 10 }}
+                  style={{ fontSize: '1.22rem', marginTop: 8 }}
                 >
-                  Interface Material System
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => onChangeTheme('clay')}
-                    className={`clay-btn ${
-                      themeMode === 'clay' ? 'clay-btn-terracotta' : ''
-                    }`}
-                  >
-                    <Sun size={15} />
-                    <span>TACTILE CLAY</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onChangeTheme('liquid-glass')}
-                    className={`clay-btn ${
-                      themeMode === 'liquid-glass' ? 'clay-btn-cobalt' : ''
-                    }`}
-                  >
-                    <Orbit size={15} />
-                    <span>SPATIAL LIQUID GLASS</span>
-                  </button>
-                </div>
+                  Choose Your Active Color Palette
+                </h3>
               </div>
 
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => onChangeTheme('clay')}
+                  className={`clay-btn ${
+                    themeMode === 'clay' ? 'clay-btn-terracotta' : ''
+                  }`}
+                  style={{ padding: '9px 16px', fontSize: '0.78rem' }}
+                >
+                  <Sun size={15} />
+                  <span>TACTILE CLAY</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChangeTheme('liquid-glass')}
+                  className={`clay-btn ${
+                    themeMode === 'liquid-glass' ? 'clay-btn-cobalt' : ''
+                  }`}
+                  style={{ padding: '9px 16px', fontSize: '0.78rem' }}
+                >
+                  <Orbit size={15} />
+                  <span>SPATIAL LIQUID GLASS</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid-3">
+              {COLOR_PALETTES.map((pal) => {
+                const isSelected = pal.id === paletteId;
+                return (
+                  <motion.div
+                    key={pal.id}
+                    whileHover={{ y: -3 }}
+                    whileTap={{ y: 1 }}
+                    onClick={() => {
+                      onChangePalette(pal.id);
+                      showToast(`APPLIED PALETTE: ${pal.name.toUpperCase()}`);
+                    }}
+                    className="clay-card-alt"
+                    style={{
+                      cursor: 'pointer',
+                      borderColor: isSelected
+                        ? 'var(--clay-terracotta)'
+                        : 'var(--clay-border-light)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <span
+                        className="font-display"
+                        style={{ fontSize: '0.98rem', fontWeight: 700 }}
+                      >
+                        {pal.name}
+                      </span>
+                      {isSelected && (
+                        <span className="clay-tag clay-tag-sage">ACTIVE</span>
+                      )}
+                    </div>
+
+                    {/* Stacked Capsule Swatches (Inspired by User's Palette Cards) */}
+                    <div
+                      className="clay-well"
+                      style={{
+                        padding: 8,
+                        borderRadius: 16,
+                        display: 'flex',
+                        gap: 6,
+                      }}
+                    >
+                      {pal.swatches.map((hex) => (
+                        <div
+                          key={hex}
+                          title={hex}
+                          style={{
+                            flex: 1,
+                            height: 36,
+                            borderRadius: 10,
+                            backgroundColor: hex,
+                            border: '1.5px solid rgba(255,255,255,0.45)',
+                            boxShadow:
+                              'inset 1.5px 1.5px 3px rgba(255,255,255,0.35), inset -1.5px -1.5px 3px rgba(0,0,0,0.28)',
+                          }}
+                        />
+                      ))}
+                    </div>
+
+                    <div
+                      className="font-mono"
+                      style={{
+                        fontSize: '0.67rem',
+                        color: 'var(--ink-secondary)',
+                      }}
+                    >
+                      {pal.subtitle}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid-2">
+            <div className="clay-card">
+              <span
+                className="clay-tag clay-tag-sage"
+                style={{ marginBottom: 16 }}
+              >
+                <span>SPATIAL LIQUID FLOW CONTROLS</span>
+              </span>
+
               <div className="clay-card-alt">
                 <div
                   className="font-display"
                   style={{ fontSize: '0.94rem', fontWeight: 700, marginBottom: 10 }}
                 >
-                  Liquid Glass Spatial Droplet Flow Speed
+                  Liquid Glass 3D Droplet Orbital Speed
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <button
@@ -1288,95 +1398,95 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
               </div>
             </div>
-          </div>
 
-          <div className="clay-card">
-            <span className="clay-tag clay-tag-cobalt" style={{ marginBottom: 16 }}>
-              <span>DEFAULT RAG PIPELINE PARAMETERS</span>
-            </span>
+            <div className="clay-card">
+              <span className="clay-tag clay-tag-cobalt" style={{ marginBottom: 16 }}>
+                <span>DEFAULT RAG PIPELINE PARAMETERS</span>
+              </span>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div>
-                <label
-                  className="font-mono"
-                  style={{
-                    fontSize: '0.72rem',
-                    fontWeight: 700,
-                    display: 'block',
-                    marginBottom: 6,
-                  }}
-                >
-                  DEFAULT FALLBACK CHUNKING STRATEGY
-                </label>
-                <select
-                  className="clay-select"
-                  value={config.defaultChunkStrategy}
-                  onChange={(e) =>
-                    onUpdateConfig({
-                      defaultChunkStrategy: e.target.value as ChunkStrategyType,
-                    })
-                  }
-                >
-                  <option value="semantic">Semantic Inflection Boundary</option>
-                  <option value="hierarchical">Hierarchical Parent-Child</option>
-                  <option value="proposition">Atomic Fact Propositions</option>
-                  <option value="structural">Structural AST &amp; Table Aware</option>
-                  <option value="sliding_window">Header-Injected Sliding Window</option>
-                </select>
-              </div>
-
-              <div>
-                <div
-                  className="font-mono"
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: '0.74rem',
-                    fontWeight: 700,
-                    marginBottom: 6,
-                  }}
-                >
-                  <span>CRAG NOISE GATE THRESHOLD</span>
-                  <span>{(config.cragThreshold * 100).toFixed(0)}%</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label
+                    className="font-mono"
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      display: 'block',
+                      marginBottom: 6,
+                    }}
+                  >
+                    DEFAULT FALLBACK CHUNKING STRATEGY
+                  </label>
+                  <select
+                    className="clay-select"
+                    value={config.defaultChunkStrategy}
+                    onChange={(e) =>
+                      onUpdateConfig({
+                        defaultChunkStrategy: e.target.value as ChunkStrategyType,
+                      })
+                    }
+                  >
+                    <option value="semantic">Semantic Inflection Boundary</option>
+                    <option value="hierarchical">Hierarchical Parent-Child</option>
+                    <option value="proposition">Atomic Fact Propositions</option>
+                    <option value="structural">Structural AST &amp; Table Aware</option>
+                    <option value="sliding_window">Header-Injected Sliding Window</option>
+                  </select>
                 </div>
-                <input
-                  type="range"
-                  className="clay-slider"
-                  min={0.15}
-                  max={0.75}
-                  step={0.05}
-                  value={config.cragThreshold}
-                  onChange={(e) =>
-                    onUpdateConfig({ cragThreshold: Number(e.target.value) })
-                  }
-                />
-              </div>
 
-              <div>
-                <div
-                  className="font-mono"
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: '0.74rem',
-                    fontWeight: 700,
-                    marginBottom: 6,
-                  }}
-                >
-                  <span>TOP-K RERANKED CONTEXT CHUNKS</span>
-                  <span>{config.topKReranked} CHUNKS</span>
+                <div>
+                  <div
+                    className="font-mono"
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: '0.74rem',
+                      fontWeight: 700,
+                      marginBottom: 6,
+                    }}
+                  >
+                    <span>CRAG NOISE GATE THRESHOLD</span>
+                    <span>{(config.cragThreshold * 100).toFixed(0)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    className="clay-slider"
+                    min={0.15}
+                    max={0.75}
+                    step={0.05}
+                    value={config.cragThreshold}
+                    onChange={(e) =>
+                      onUpdateConfig({ cragThreshold: Number(e.target.value) })
+                    }
+                  />
                 </div>
-                <input
-                  type="range"
-                  className="clay-slider"
-                  min={2}
-                  max={10}
-                  step={1}
-                  value={config.topKReranked}
-                  onChange={(e) =>
-                    onUpdateConfig({ topKReranked: Number(e.target.value) })
-                  }
-                />
+
+                <div>
+                  <div
+                    className="font-mono"
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: '0.74rem',
+                      fontWeight: 700,
+                      marginBottom: 6,
+                    }}
+                  >
+                    <span>TOP-K RERANKED CONTEXT CHUNKS</span>
+                    <span>{config.topKReranked} CHUNKS</span>
+                  </div>
+                  <input
+                    type="range"
+                    className="clay-slider"
+                    min={2}
+                    max={10}
+                    step={1}
+                    value={config.topKReranked}
+                    onChange={(e) =>
+                      onUpdateConfig({ topKReranked: Number(e.target.value) })
+                    }
+                  />
+                </div>
               </div>
             </div>
           </div>

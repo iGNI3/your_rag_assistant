@@ -48,6 +48,11 @@ import { VectorSpaceCanvas } from './components/VectorSpaceCanvas';
 import { MetricsAndEvaluationSuite } from './components/MetricsAndEvaluationSuite';
 import { DatabaseAndFindingsVault } from './components/DatabaseAndFindingsVault';
 import { SpatialLiquidBackground } from './components/SpatialLiquidBackground';
+import {
+  COLOR_PALETTES,
+  ColorPaletteId,
+  getPaletteById,
+} from './themePalettes';
 
 export type ThemeMode = 'clay' | 'liquid-glass';
 
@@ -167,7 +172,13 @@ export const App: React.FC = () => {
     const saved = localStorage.getItem('clayrag_theme_mode');
     return saved === 'liquid-glass' || saved === 'clay' ? saved : 'clay';
   });
+  const [paletteId, setPaletteId] = useState<ColorPaletteId>(() => {
+    const saved = localStorage.getItem('clayrag_color_palette');
+    return getPaletteById(saved).id;
+  });
   const [spatialFlow, setSpatialFlow] = useState<'calm' | 'dynamic'>('dynamic');
+
+  const activePalette = getPaletteById(paletteId);
 
   // Multi-user Auth State
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
@@ -204,15 +215,32 @@ export const App: React.FC = () => {
   );
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', themeMode);
+    const root = document.documentElement;
+    root.setAttribute('data-theme', themeMode);
     localStorage.setItem('clayrag_theme_mode', themeMode);
+    localStorage.setItem('clayrag_color_palette', paletteId);
+
+    const varsToApply =
+      themeMode === 'clay'
+        ? activePalette.clayVars
+        : activePalette.liquidVars;
+
+    // Clear previous overrides first so switching modes stays clean
+    const allKnownKeys = new Set([
+      ...Object.keys(activePalette.clayVars),
+      ...Object.keys(activePalette.liquidVars),
+    ]);
+    allKnownKeys.forEach((k) => root.style.removeProperty(k));
+    Object.entries(varsToApply).forEach(([k, val]) => {
+      root.style.setProperty(k, val);
+    });
 
     gsap.fromTo(
       '.clay-card, .page-header-banner, .clay-sidebar',
       { y: 6, scale: 0.992 },
-      { y: 0, scale: 1, duration: 0.45, stagger: 0.03, ease: 'power3.out' }
+      { y: 0, scale: 1, duration: 0.42, stagger: 0.025, ease: 'power3.out' }
     );
-  }, [themeMode]);
+  }, [themeMode, paletteId, activePalette]);
 
   const navigateToPage = (page: AppPageId) => {
     window.location.hash = `/${page}`;
@@ -499,6 +527,7 @@ export const App: React.FC = () => {
         <SpatialLiquidBackground
           active={themeMode === 'liquid-glass'}
           flowIntensity={spatialFlow}
+          palette={activePalette}
         />
         <div
           style={{
@@ -524,6 +553,7 @@ export const App: React.FC = () => {
         <SpatialLiquidBackground
           active={themeMode === 'liquid-glass'}
           flowIntensity={spatialFlow}
+          palette={activePalette}
         />
         <AuthPage
           themeMode={themeMode}
@@ -559,6 +589,7 @@ export const App: React.FC = () => {
       <SpatialLiquidBackground
         active={themeMode === 'liquid-glass'}
         flowIntensity={spatialFlow}
+        palette={activePalette}
       />
 
       <div className="app-multi-page-shell">
@@ -656,6 +687,48 @@ export const App: React.FC = () => {
                 <Orbit size={13} />
                 <span>LIQUID GLASS</span>
               </button>
+            </div>
+
+            {/* Quick 9-Palette Swatch Bar */}
+            <div
+              className="clay-well"
+              style={{
+                marginTop: 8,
+                padding: '7px 9px',
+                borderRadius: 14,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 5,
+              }}
+            >
+              {COLOR_PALETTES.map((pal) => {
+                const isActive = pal.id === paletteId;
+                const primarySwatch = pal.swatches[1] || pal.swatches[0];
+                return (
+                  <button
+                    key={pal.id}
+                    type="button"
+                    title={`Palette: ${pal.name}`}
+                    onClick={() => setPaletteId(pal.id)}
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: 8,
+                      backgroundColor: primarySwatch,
+                      border: isActive
+                        ? '2.5px solid #ffffff'
+                        : '1.5px solid rgba(255,255,255,0.45)',
+                      boxShadow: isActive
+                        ? '0 0 0 2px var(--clay-terracotta)'
+                        : 'inset 1px 1px 2px rgba(255,255,255,0.45)',
+                      cursor: 'pointer',
+                      transition: 'transform 0.15s ease',
+                      transform: isActive ? 'scale(1.15)' : 'scale(1)',
+                    }}
+                  />
+                );
+              })}
             </div>
 
             <nav style={{ marginTop: 4 }}>
@@ -994,8 +1067,10 @@ export const App: React.FC = () => {
                     modelCatalog={modelCatalog}
                     themeMode={themeMode}
                     spatialFlow={spatialFlow}
+                    paletteId={paletteId}
                     onChangeTheme={setThemeMode}
                     onChangeSpatialFlow={setSpatialFlow}
+                    onChangePalette={setPaletteId}
                     onUpdateConfig={handleUpdateConfig}
                     onUserUpdated={(u) => setCurrentUser(u)}
                     onLogout={handleLogout}

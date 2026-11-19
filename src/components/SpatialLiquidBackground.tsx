@@ -1,20 +1,23 @@
 import React, { useEffect, useRef } from 'react';
 import gsap from 'gsap';
 import anime from 'animejs';
+import { ColorPaletteDef } from '../themePalettes';
 
 interface SpatialLiquidBackgroundProps {
   active: boolean;
   flowIntensity?: 'calm' | 'dynamic';
+  palette: ColorPaletteDef;
 }
 
 /**
- * Replicates the exact 3D Glossy Liquid Glass Droplets, Mercury Amoeba Blobs,
- * and Deep Midnight Spatial Refraction Environment from the user's reference mockup.
+ * Renders 3D Glossy Liquid Glass Droplets & Organic Mercury Amoeba Blobs
+ * dynamically tinted by the active Color Palette's optical shader stops.
  */
 export const SpatialLiquidBackground: React.FC<
   SpatialLiquidBackgroundProps
-> = ({ active, flowIntensity = 'dynamic' }) => {
+> = ({ active, flowIntensity = 'dynamic', palette }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const d = palette.liquidDroplets;
 
   useEffect(() => {
     if (!active || !containerRef.current) return;
@@ -37,7 +40,6 @@ export const SpatialLiquidBackground: React.FC<
       });
     }, containerRef);
 
-    // Anime.js organic morphing on the main SVG amoeba paths
     const morphAnim = anime({
       targets: containerRef.current.querySelectorAll('.anime-morph-blob'),
       scale: [0.97, 1.04],
@@ -51,7 +53,7 @@ export const SpatialLiquidBackground: React.FC<
       ctx.revert();
       morphAnim.pause();
     };
-  }, [active, flowIntensity]);
+  }, [active, flowIntensity, palette.id]);
 
   if (!active) return null;
 
@@ -64,10 +66,11 @@ export const SpatialLiquidBackground: React.FC<
         zIndex: 0,
         pointerEvents: 'none',
         overflow: 'hidden',
-        backgroundColor: '#070A12',
+        backgroundColor: d.canvasBg,
+        transition: 'background-color 0.45s ease',
       }}
     >
-      {/* Subtle Ambient Deep-Space Caustic Glows */}
+      {/* Palette-Driven Ambient Deep-Space Caustic Glows */}
       <div
         style={{
           position: 'absolute',
@@ -76,8 +79,9 @@ export const SpatialLiquidBackground: React.FC<
           width: 620,
           height: 620,
           borderRadius: '50%',
-          backgroundColor: 'rgba(32, 168, 212, 0.13)',
+          backgroundColor: d.glowA,
           filter: 'blur(120px)',
+          transition: 'background-color 0.45s ease',
         }}
       />
       <div
@@ -88,8 +92,9 @@ export const SpatialLiquidBackground: React.FC<
           width: 560,
           height: 560,
           borderRadius: '50%',
-          backgroundColor: 'rgba(132, 78, 236, 0.13)',
+          backgroundColor: d.glowB,
           filter: 'blur(125px)',
+          transition: 'background-color 0.45s ease',
         }}
       />
       <div
@@ -100,8 +105,9 @@ export const SpatialLiquidBackground: React.FC<
           width: 680,
           height: 480,
           borderRadius: '50%',
-          backgroundColor: 'rgba(24, 188, 204, 0.12)',
+          backgroundColor: d.glowC,
           filter: 'blur(130px)',
+          transition: 'background-color 0.45s ease',
         }}
       />
 
@@ -117,29 +123,26 @@ export const SpatialLiquidBackground: React.FC<
         }}
       >
         <defs>
-          {/* 1. Cyan-Sapphire-Violet Iridescent 3D Droplet Shader */}
           <radialGradient id="droplet-iridescent" cx="32%" cy="28%" r="72%">
-            <stop offset="0%" stopColor="rgba(220, 252, 255, 0.92)" />
-            <stop offset="18%" stopColor="rgba(68, 224, 246, 0.78)" />
-            <stop offset="52%" stopColor="rgba(66, 108, 238, 0.62)" />
-            <stop offset="82%" stopColor="rgba(148, 72, 232, 0.55)" />
-            <stop offset="100%" stopColor="rgba(16, 24, 48, 0.85)" />
+            <stop offset="0%" stopColor={d.iridescentStops[0]} />
+            <stop offset="20%" stopColor={d.iridescentStops[1]} />
+            <stop offset="52%" stopColor={d.iridescentStops[2]} />
+            <stop offset="82%" stopColor={d.iridescentStops[3]} />
+            <stop offset="100%" stopColor={d.iridescentStops[4]} />
           </radialGradient>
 
-          {/* 2. Deep Aqua-Mercury 3D Droplet Shader */}
           <radialGradient id="droplet-aqua" cx="28%" cy="24%" r="74%">
-            <stop offset="0%" stopColor="rgba(235, 254, 255, 0.95)" />
-            <stop offset="22%" stopColor="rgba(58, 218, 238, 0.82)" />
-            <stop offset="60%" stopColor="rgba(20, 96, 148, 0.68)" />
-            <stop offset="100%" stopColor="rgba(8, 20, 38, 0.9)" />
+            <stop offset="0%" stopColor={d.aquaStops[0]} />
+            <stop offset="24%" stopColor={d.aquaStops[1]} />
+            <stop offset="62%" stopColor={d.aquaStops[2]} />
+            <stop offset="100%" stopColor={d.aquaStops[3]} />
           </radialGradient>
 
-          {/* 3. Smoked Glass Mercury Bridge Shader */}
           <linearGradient id="mercury-bridge" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="rgba(205, 245, 255, 0.75)" />
-            <stop offset="35%" stopColor="rgba(64, 152, 214, 0.48)" />
-            <stop offset="70%" stopColor="rgba(24, 38, 68, 0.78)" />
-            <stop offset="100%" stopColor="rgba(156, 232, 252, 0.65)" />
+            <stop offset="0%" stopColor={d.bridgeStops[0]} />
+            <stop offset="36%" stopColor={d.bridgeStops[1]} />
+            <stop offset="72%" stopColor={d.bridgeStops[2]} />
+            <stop offset="100%" stopColor={d.bridgeStops[3]} />
           </linearGradient>
 
           <filter id="droplet-glow" x="-30%" y="-30%" width="160%" height="160%">
@@ -153,19 +156,19 @@ export const SpatialLiquidBackground: React.FC<
               dx="0"
               dy="0"
               stdDeviation="12"
-              floodColor="rgba(64, 224, 248, 0.28)"
+              floodColor={d.glowColor}
             />
           </filter>
         </defs>
 
-        {/* A. Top-Center / Right Large Aqua-Teal 3D Sphere behind Header Banner */}
+        {/* A. Top-Right 3D Sphere behind Header Banner */}
         <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
           <circle
             cx="1210"
             cy="38"
             r="68"
             fill="url(#droplet-aqua)"
-            stroke="rgba(180, 250, 255, 0.65)"
+            stroke={d.rimStroke}
             strokeWidth="1.5"
           />
           <ellipse
@@ -178,7 +181,7 @@ export const SpatialLiquidBackground: React.FC<
           />
         </g>
 
-        {/* B. Main Iridescent Cyan-Blue-Violet Liquid Amoeba Blob (Right of Header / Model Bar) */}
+        {/* B. Main Iridescent Liquid Amoeba Blob */}
         <g
           className="liquid-3d-droplet anime-morph-blob"
           filter="url(#droplet-glow)"
@@ -187,10 +190,9 @@ export const SpatialLiquidBackground: React.FC<
           <path
             d="M1355,148 C1398,142 1432,178 1422,226 C1412,268 1438,312 1404,352 C1368,392 1284,386 1266,342 C1248,298 1296,268 1316,224 C1334,182 1318,154 1355,148 Z"
             fill="url(#droplet-iridescent)"
-            stroke="rgba(195, 248, 255, 0.75)"
+            stroke={d.rimStroke}
             strokeWidth="2"
           />
-          {/* Glossy curved white water-droplet specular highlight */}
           <path
             d="M1344,166 C1372,162 1396,184 1390,214"
             fill="none"
@@ -201,18 +203,18 @@ export const SpatialLiquidBackground: React.FC<
           <path
             d="M1284,324 C1292,352 1336,368 1374,354"
             fill="none"
-            stroke="rgba(110, 242, 255, 0.7)"
+            stroke={d.rimStroke}
             strokeWidth="3.5"
             strokeLinecap="round"
           />
         </g>
 
-        {/* C. Horizontal Stretched Liquid Mercury Droplet Bridging Header & Model Bar */}
+        {/* C. Horizontal Stretched Liquid Mercury Droplet */}
         <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
           <path
             d="M956,254 C984,248 1032,262 1084,252 C1126,242 1158,224 1178,242 C1196,258 1184,292 1152,296 C1116,300 1076,278 1026,282 C984,286 944,294 936,276 C928,262 938,258 956,254 Z"
             fill="url(#mercury-bridge)"
-            stroke="rgba(210, 250, 255, 0.8)"
+            stroke={d.rimStroke}
             strokeWidth="1.8"
           />
           <path
@@ -224,14 +226,14 @@ export const SpatialLiquidBackground: React.FC<
           />
         </g>
 
-        {/* D. Left Sidebar Edge Clinging Liquid Glass Droplets */}
+        {/* D. Left Sidebar Edge Clinging Liquid Droplets */}
         <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
           <circle
             cx="94"
             cy="258"
             r="26"
             fill="url(#droplet-aqua)"
-            stroke="rgba(200, 252, 255, 0.85)"
+            stroke={d.rimStroke}
             strokeWidth="1.8"
           />
           <ellipse
@@ -247,17 +249,17 @@ export const SpatialLiquidBackground: React.FC<
             cy="292"
             r="10"
             fill="url(#droplet-aqua)"
-            stroke="rgba(200, 252, 255, 0.8)"
+            stroke={d.rimStroke}
             strokeWidth="1.2"
           />
         </g>
 
-        {/* E. Bottom-Left Sidebar Organic Liquid Mercury Blob & Telemetry Bubbles */}
+        {/* E. Bottom-Left Organic Liquid Blob & Telemetry Bubbles */}
         <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
           <path
             d="M116,690 C148,684 176,724 166,772 C156,818 184,864 152,902 C122,936 74,918 68,874 C62,832 94,798 96,752 C98,716 92,694 116,690 Z"
             fill="url(#droplet-iridescent)"
-            stroke="rgba(185, 248, 255, 0.72)"
+            stroke={d.rimStroke}
             strokeWidth="1.8"
           />
           <path
@@ -267,13 +269,12 @@ export const SpatialLiquidBackground: React.FC<
             strokeWidth="4"
             strokeLinecap="round"
           />
-          {/* Translucent Glass Bubbles near Telemetry Box */}
           <circle
             cx="332"
             cy="842"
             r="22"
             fill="url(#mercury-bridge)"
-            stroke="rgba(205, 250, 255, 0.78)"
+            stroke={d.rimStroke}
             strokeWidth="1.5"
           />
           <ellipse
@@ -289,7 +290,7 @@ export const SpatialLiquidBackground: React.FC<
             cy="888"
             r="17"
             fill="url(#mercury-bridge)"
-            stroke="rgba(205, 250, 255, 0.75)"
+            stroke={d.rimStroke}
             strokeWidth="1.4"
           />
           <ellipse
@@ -302,12 +303,12 @@ export const SpatialLiquidBackground: React.FC<
           />
         </g>
 
-        {/* F. Right Middle Iridescent Violet-Aqua Droplet */}
+        {/* F. Right Middle Droplet */}
         <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
           <path
             d="M1566,464 C1596,460 1618,492 1612,526 C1606,558 1574,578 1548,562 C1524,546 1528,512 1542,486 C1550,472 1554,466 1566,464 Z"
             fill="url(#droplet-iridescent)"
-            stroke="rgba(205, 248, 255, 0.82)"
+            stroke={d.rimStroke}
             strokeWidth="1.8"
           />
           <path
@@ -319,14 +320,14 @@ export const SpatialLiquidBackground: React.FC<
           />
         </g>
 
-        {/* G. Lower-Center / Right Iridescent Sub-Surface Sphere */}
+        {/* G. Lower-Right Sub-Surface Sphere */}
         <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
           <circle
             cx="1325"
             cy="795"
             r="52"
             fill="url(#droplet-iridescent)"
-            stroke="rgba(180, 245, 255, 0.55)"
+            stroke={d.rimStroke}
             strokeWidth="1.5"
             opacity="0.82"
           />
