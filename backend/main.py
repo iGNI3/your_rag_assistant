@@ -51,6 +51,7 @@ def health_check():
         "status": "ok",
         "service": "clayrag-python-backend",
         "version": "1.0.0",
+        "databaseEngine": "postgresql" if sql_db.is_postgres else "sqlite",
         "dataDir": DATA_DIR,
     })
 

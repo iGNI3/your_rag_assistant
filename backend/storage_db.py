@@ -9,17 +9,78 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row as pg_dict_row
+except ImportError:
+    psycopg = None  # type: ignore
+    pg_dict_row = None  # type: ignore
+
+
+class _DualCursor:
+    def __init__(self, raw_cur: Any):
+        self._cur = raw_cur
+
+    def fetchone(self) -> Any:
+        return self._cur.fetchone()
+
+    def fetchall(self) -> List[Any]:
+        return self._cur.fetchall()
+
+    @property
+    def rowcount(self) -> int:
+        return self._cur.rowcount
+
+
+class _DualConnection:
+    """
+    Unified context-managed connection wrapper that speaks the exact same API
+    for both SQLite3 (local / Render Disk) and PostgreSQL (Neon / Supabase via DATABASE_URL).
+    """
+
+    def __init__(self, conn: Any, is_postgres: bool):
+        self._conn = conn
+        self.is_postgres = is_postgres
+
+    def __enter__(self) -> "_DualConnection":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if exc_type is None:
+                self._conn.commit()
+            else:
+                self._conn.rollback()
+        finally:
+            self._conn.close()
+        return False
+
+    def _adapt_sql(self, sql: str) -> str:
+        if self.is_postgres:
+            return sql.replace("?", "%s")
+        return sql
+
+    def execute(self, sql: str, params: Tuple[Any, ...] = ()) -> _DualCursor:
+        adapted = self._adapt_sql(sql)
+        cur = self._conn.execute(adapted, params)
+        return _DualCursor(cur)
+
+
+def _is_integrity_error(exc: Exception) -> bool:
+    if isinstance(exc, sqlite3.IntegrityError):
+        return True
+    if psycopg is not None and isinstance(exc, psycopg.IntegrityError):
+        return True
+    return False
+
 
 class PersistentRAGDatabase:
     """
-    Multi-User ACID-compliant SQLite3 (WAL mode) + File Vault storage engine for ClayRAG.
-    Persists per-user isolated data across:
-      1. `users` & `sessions` tables (PBKDF2-HMAC-SHA256 salted password auth + Bearer tokens)
-      2. `documents` table (raw text, cleaned text, OCR telemetry, 5-strategy benchmarks, per user_id)
-      3. `vector_chunks` table (chunk payload, 128-dim vector embeddings, 2D coords, BM25 sparse terms, per user_id)
-      4. `query_runs` table (Agentic RAG chat runs, reshaped prompts, HyDE, retrieved chunks, CRAG grades, per user_id)
-      5. `saved_findings` table (pinned research findings, analyst notes, tags, citations, per user_id)
-      6. `pipeline_config` table (per-user API keys, LLM provider/model selections, offline GGUF path, RRF/CRAG tuning)
+    Dual-Engine Multi-User ACID Storage Vault for ClayRAG.
+    - When `DATABASE_URL` env var is set (e.g. Neon or Supabase PostgreSQL):
+      persists all 7 tables permanently in Cloud PostgreSQL across Render sleeps/redeploys.
+    - Otherwise (local development or Render Persistent Disk):
+      persists in ACID SQLite3 (WAL mode) at `<data_dir>/clayrag_vault.sqlite3`.
     """
 
     def __init__(self, data_dir: str):
@@ -30,17 +91,34 @@ class PersistentRAGDatabase:
         os.makedirs(self.uploads_dir, exist_ok=True)
         os.makedirs(self.exports_dir, exist_ok=True)
 
+        raw_db_url = (os.environ.get("DATABASE_URL") or "").strip()
+        if raw_db_url.startswith("postgres://"):
+            raw_db_url = "postgresql://" + raw_db_url[len("postgres://"):]
+
+        self.database_url: Optional[str] = raw_db_url if raw_db_url.startswith("postgresql://") else None
+        self.is_postgres: bool = bool(self.database_url and psycopg is not None)
+        if self.database_url and psycopg is None:
+            print("WARNING: DATABASE_URL is set but psycopg is not installed; falling back to SQLite3.")
+
         self.db_path = os.path.join(self.data_dir, "clayrag_vault.sqlite3")
         self._init_schema()
         self._ensure_demo_user()
 
-    def _get_conn(self) -> sqlite3.Connection:
+    def _get_conn(self) -> _DualConnection:
+        if self.is_postgres and self.database_url and psycopg is not None:
+            conn = psycopg.connect(
+                self.database_url,
+                row_factory=pg_dict_row,
+                connect_timeout=15,
+            )
+            return _DualConnection(conn, is_postgres=True)
+
         conn = sqlite3.connect(self.db_path, timeout=15.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
-        return conn
+        return _DualConnection(conn, is_postgres=False)
 
     def _hash_password(self, password: str, salt_hex: Optional[str] = None) -> Tuple[str, str]:
         salt = salt_hex or secrets.token_hex(16)
@@ -56,120 +134,131 @@ class PersistentRAGDatabase:
         _, computed = self._hash_password(password, salt_hex)
         return hmac.compare_digest(computed, expected_hash)
 
-    def _add_column_if_missing(self, conn: sqlite3.Connection, table: str, column: str, col_def: str):
+    def _add_column_if_missing_sqlite(self, conn: _DualConnection, table: str, column: str, col_def: str):
+        if conn.is_postgres:
+            return
         cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
         if column not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
 
     def _init_schema(self):
-        with self._get_conn() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id TEXT PRIMARY KEY,
-                    username TEXT UNIQUE NOT NULL,
-                    display_name TEXT NOT NULL,
-                    email TEXT UNIQUE NOT NULL,
-                    password_salt TEXT NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    role TEXT NOT NULL DEFAULT 'USER',
-                    created_at TEXT NOT NULL,
-                    last_login_at TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS sessions (
-                    token TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS documents (
-                    id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL DEFAULT 'usr_demo_admin',
-                    title TEXT NOT NULL,
-                    filename TEXT NOT NULL,
-                    stored_file_path TEXT,
-                    format TEXT NOT NULL,
-                    ingested_at TEXT NOT NULL,
-                    raw_text TEXT NOT NULL,
-                    cleaned_text TEXT NOT NULL,
-                    selected_strategy TEXT NOT NULL,
-                    auto_optimized INTEGER NOT NULL DEFAULT 1,
-                    extraction_telemetry_json TEXT NOT NULL,
-                    strategy_benchmarks_json TEXT NOT NULL,
-                    chunk_count INTEGER NOT NULL DEFAULT 0
-                );
-
-                CREATE TABLE IF NOT EXISTS vector_chunks (
-                    id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL DEFAULT 'usr_demo_admin',
-                    document_id TEXT NOT NULL,
-                    document_title TEXT NOT NULL,
-                    document_format TEXT NOT NULL,
-                    chunk_index INTEGER NOT NULL,
-                    parent_chunk_id TEXT,
-                    parent_context TEXT,
-                    section_path TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    token_count INTEGER NOT NULL,
-                    char_count INTEGER NOT NULL,
-                    strategy TEXT NOT NULL,
-                    coherence_score INTEGER NOT NULL,
-                    information_density INTEGER NOT NULL,
-                    keywords_json TEXT NOT NULL,
-                    embedding_json TEXT NOT NULL,
-                    coords_2d_json TEXT NOT NULL,
-                    sparse_terms_json TEXT NOT NULL,
-                    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS query_runs (
-                    query_id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL DEFAULT 'usr_demo_admin',
-                    timestamp TEXT NOT NULL,
-                    original_prompt TEXT NOT NULL,
-                    reshaped_primary_query TEXT NOT NULL,
-                    detected_intent TEXT NOT NULL,
-                    answer TEXT NOT NULL,
-                    overall_optimization_index REAL NOT NULL,
-                    groundedness_faithfulness REAL NOT NULL,
-                    ndcg_at_k REAL NOT NULL,
-                    total_latency_ms INTEGER NOT NULL,
-                    full_response_json TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS saved_findings (
-                    finding_id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL DEFAULT 'usr_demo_admin',
-                    query_id TEXT,
-                    title TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    prompt TEXT NOT NULL,
-                    reshaped_query TEXT NOT NULL,
-                    synthesized_answer TEXT NOT NULL,
-                    analyst_notes TEXT NOT NULL DEFAULT '',
-                    tags_json TEXT NOT NULL DEFAULT '[]',
-                    citations_json TEXT NOT NULL DEFAULT '[]',
-                    claim_verifications_json TEXT NOT NULL DEFAULT '[]',
-                    metrics_json TEXT NOT NULL DEFAULT '{}',
-                    pinned INTEGER NOT NULL DEFAULT 1
-                );
-
-                CREATE TABLE IF NOT EXISTS pipeline_config (
-                    config_key TEXT PRIMARY KEY,
-                    config_json TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                """
+        ddl_statements = [
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                display_name TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_salt TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'USER',
+                created_at TEXT NOT NULL,
+                last_login_at TEXT
             )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT 'usr_demo_admin',
+                title TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                stored_file_path TEXT,
+                format TEXT NOT NULL,
+                ingested_at TEXT NOT NULL,
+                raw_text TEXT NOT NULL,
+                cleaned_text TEXT NOT NULL,
+                selected_strategy TEXT NOT NULL,
+                auto_optimized INTEGER NOT NULL DEFAULT 1,
+                extraction_telemetry_json TEXT NOT NULL,
+                strategy_benchmarks_json TEXT NOT NULL,
+                chunk_count INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS vector_chunks (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT 'usr_demo_admin',
+                document_id TEXT NOT NULL,
+                document_title TEXT NOT NULL,
+                document_format TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                parent_chunk_id TEXT,
+                parent_context TEXT,
+                section_path TEXT NOT NULL,
+                content TEXT NOT NULL,
+                token_count INTEGER NOT NULL,
+                char_count INTEGER NOT NULL,
+                strategy TEXT NOT NULL,
+                coherence_score INTEGER NOT NULL,
+                information_density INTEGER NOT NULL,
+                keywords_json TEXT NOT NULL,
+                embedding_json TEXT NOT NULL,
+                coords_2d_json TEXT NOT NULL,
+                sparse_terms_json TEXT NOT NULL,
+                FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS query_runs (
+                query_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT 'usr_demo_admin',
+                timestamp TEXT NOT NULL,
+                original_prompt TEXT NOT NULL,
+                reshaped_primary_query TEXT NOT NULL,
+                detected_intent TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                overall_optimization_index REAL NOT NULL,
+                groundedness_faithfulness REAL NOT NULL,
+                ndcg_at_k REAL NOT NULL,
+                total_latency_ms INTEGER NOT NULL,
+                full_response_json TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS saved_findings (
+                finding_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT 'usr_demo_admin',
+                query_id TEXT,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                reshaped_query TEXT NOT NULL,
+                synthesized_answer TEXT NOT NULL,
+                analyst_notes TEXT NOT NULL DEFAULT '',
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                citations_json TEXT NOT NULL DEFAULT '[]',
+                claim_verifications_json TEXT NOT NULL DEFAULT '[]',
+                metrics_json TEXT NOT NULL DEFAULT '{}',
+                pinned INTEGER NOT NULL DEFAULT 1
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS pipeline_config (
+                config_key TEXT PRIMARY KEY,
+                config_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+        ]
 
-            # Safe migrations if upgrading an existing clayrag_vault.sqlite3
-            self._add_column_if_missing(conn, "documents", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
-            self._add_column_if_missing(conn, "vector_chunks", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
-            self._add_column_if_missing(conn, "query_runs", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
-            self._add_column_if_missing(conn, "saved_findings", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
+        with self._get_conn() as conn:
+            for stmt in ddl_statements:
+                conn.execute(stmt)
+
+            # Safe migrations if upgrading an existing local clayrag_vault.sqlite3
+            self._add_column_if_missing_sqlite(conn, "documents", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
+            self._add_column_if_missing_sqlite(conn, "vector_chunks", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
+            self._add_column_if_missing_sqlite(conn, "query_runs", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
+            self._add_column_if_missing_sqlite(conn, "saved_findings", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
 
             conn.execute("CREATE INDEX IF NOT EXISTS idx_docs_user ON documents(user_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_user_doc ON vector_chunks(user_id, document_id)")
@@ -190,6 +279,7 @@ class PersistentRAGDatabase:
                         user_id, username, display_name, email, password_salt,
                         password_hash, role, created_at, last_login_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (user_id) DO NOTHING
                     """,
                     (
                         "usr_demo_admin",
@@ -204,7 +294,7 @@ class PersistentRAGDatabase:
                     ),
                 )
 
-    def _serialize_user(self, row: sqlite3.Row) -> Dict[str, Any]:
+    def _serialize_user(self, row: Any) -> Dict[str, Any]:
         return {
             "userId": row["user_id"],
             "username": row["username"],
@@ -254,13 +344,15 @@ class PersistentRAGDatabase:
                 )
                 row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
                 return self._serialize_user(row), None
-        except sqlite3.IntegrityError as e:
-            err_msg = str(e).lower()
-            if "username" in err_msg:
-                return None, "That username is already taken. Try signing in or choose another."
-            if "email" in err_msg:
-                return None, "An account with that email already exists. Try signing in."
-            return None, "Account already exists."
+        except Exception as e:
+            if _is_integrity_error(e):
+                err_msg = str(e).lower()
+                if "username" in err_msg:
+                    return None, "That username is already taken. Try signing in or choose another."
+                if "email" in err_msg:
+                    return None, "An account with that email already exists. Try signing in."
+                return None, "Account already exists."
+            raise
 
     def authenticate_user(self, identifier: str, password: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         ident = identifier.strip().lower()
@@ -352,8 +444,10 @@ class PersistentRAGDatabase:
                 )
                 updated = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
                 return self._serialize_user(updated), None
-        except sqlite3.IntegrityError:
-            return None, "Username or email is already used by another account."
+        except Exception as e:
+            if _is_integrity_error(e):
+                return None, "Username or email is already used by another account."
+            raise
 
     def change_user_password(
         self,
@@ -562,12 +656,24 @@ class PersistentRAGDatabase:
         with self._get_conn() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO query_runs (
+                INSERT INTO query_runs (
                     query_id, user_id, timestamp, original_prompt, reshaped_primary_query,
                     detected_intent, answer, overall_optimization_index,
                     groundedness_faithfulness, ndcg_at_k, total_latency_ms,
                     full_response_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(query_id) DO UPDATE SET
+                    user_id=excluded.user_id,
+                    timestamp=excluded.timestamp,
+                    original_prompt=excluded.original_prompt,
+                    reshaped_primary_query=excluded.reshaped_primary_query,
+                    detected_intent=excluded.detected_intent,
+                    answer=excluded.answer,
+                    overall_optimization_index=excluded.overall_optimization_index,
+                    groundedness_faithfulness=excluded.groundedness_faithfulness,
+                    ndcg_at_k=excluded.ndcg_at_k,
+                    total_latency_ms=excluded.total_latency_ms,
+                    full_response_json=excluded.full_response_json
                 """,
                 (
                     resp_obj["queryId"],
@@ -610,11 +716,25 @@ class PersistentRAGDatabase:
         with self._get_conn() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO saved_findings (
+                INSERT INTO saved_findings (
                     finding_id, user_id, query_id, title, created_at, prompt, reshaped_query,
                     synthesized_answer, analyst_notes, tags_json, citations_json,
                     claim_verifications_json, metrics_json, pinned
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(finding_id) DO UPDATE SET
+                    user_id=excluded.user_id,
+                    query_id=excluded.query_id,
+                    title=excluded.title,
+                    created_at=excluded.created_at,
+                    prompt=excluded.prompt,
+                    reshaped_query=excluded.reshaped_query,
+                    synthesized_answer=excluded.synthesized_answer,
+                    analyst_notes=excluded.analyst_notes,
+                    tags_json=excluded.tags_json,
+                    citations_json=excluded.citations_json,
+                    claim_verifications_json=excluded.claim_verifications_json,
+                    metrics_json=excluded.metrics_json,
+                    pinned=1
                 """,
                 (
                     finding_id,
@@ -636,17 +756,20 @@ class PersistentRAGDatabase:
         user_export_dir = os.path.join(self.exports_dir, user_id)
         os.makedirs(user_export_dir, exist_ok=True)
         md_path = os.path.join(user_export_dir, f"{finding_id}.md")
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(f"# {title}\n\n")
-            f.write(f"- **Finding ID**: `{finding_id}`\n")
-            f.write(f"- **Owner User ID**: `{user_id}`\n")
-            f.write(f"- **Saved At**: `{created_at}`\n")
-            f.write(f"- **Original Prompt**: {prompt}\n")
-            f.write(f"- **Reshaped Query**: `{reshaped_query}`\n")
-            if analyst_notes:
-                f.write(f"- **Analyst Notes**: {analyst_notes}\n")
-            f.write("\n## Synthesized Grounded Answer\n\n")
-            f.write(synthesized_answer + "\n")
+        try:
+            with open(md_path, "w", encoding="utf-8") as f:
+                f.write(f"# {title}\n\n")
+                f.write(f"- **Finding ID**: `{finding_id}`\n")
+                f.write(f"- **Owner User ID**: `{user_id}`\n")
+                f.write(f"- **Saved At**: `{created_at}`\n")
+                f.write(f"- **Original Prompt**: {prompt}\n")
+                f.write(f"- **Reshaped Query**: `{reshaped_query}`\n")
+                if analyst_notes:
+                    f.write(f"- **Analyst Notes**: {analyst_notes}\n")
+                f.write("\n## Synthesized Grounded Answer\n\n")
+                f.write(synthesized_answer + "\n")
+        except Exception:
+            pass
 
         return {
             "findingId": finding_id,
@@ -708,8 +831,11 @@ class PersistentRAGDatabase:
         with self._get_conn() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO pipeline_config (config_key, config_json, updated_at)
+                INSERT INTO pipeline_config (config_key, config_json, updated_at)
                 VALUES (?, ?, ?)
+                ON CONFLICT(config_key) DO UPDATE SET
+                    config_json=excluded.config_json,
+                    updated_at=excluded.updated_at
                 """,
                 (f"user_{user_id}", json.dumps(cfg), datetime.now(timezone.utc).isoformat()),
             )
@@ -726,10 +852,15 @@ class PersistentRAGDatabase:
                 ).fetchone()
             return json.loads(row["config_json"]) if row else None
 
+    def _count_scalar(self, conn: _DualConnection, sql: str, params: Tuple[Any, ...] = ()) -> int:
+        row = conn.execute(sql, params).fetchone()
+        if row is None:
+            return 0
+        if isinstance(row, dict):
+            return int(next(iter(row.values())))
+        return int(row[0])
+
     def get_database_telemetry(self, user_id: str = "usr_demo_admin") -> Dict[str, Any]:
-        db_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
-        wal_path = self.db_path + "-wal"
-        wal_size = os.path.getsize(wal_path) if os.path.exists(wal_path) else 0
         json_index_path = os.path.join(self.data_dir, "hybrid_vectordb.json")
         json_size = os.path.getsize(json_index_path) if os.path.exists(json_index_path) else 0
 
@@ -739,19 +870,35 @@ class PersistentRAGDatabase:
         export_files = os.listdir(user_exports_dir) if os.path.exists(user_exports_dir) else []
 
         with self._get_conn() as conn:
-            user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-            doc_count = conn.execute("SELECT COUNT(*) FROM documents WHERE user_id = ?", (user_id,)).fetchone()[0]
-            chunk_count = conn.execute("SELECT COUNT(*) FROM vector_chunks WHERE user_id = ?", (user_id,)).fetchone()[0]
-            query_count = conn.execute("SELECT COUNT(*) FROM query_runs WHERE user_id = ?", (user_id,)).fetchone()[0]
-            finding_count = conn.execute("SELECT COUNT(*) FROM saved_findings WHERE user_id = ?", (user_id,)).fetchone()[0]
+            user_count = self._count_scalar(conn, "SELECT COUNT(*) FROM users")
+            doc_count = self._count_scalar(conn, "SELECT COUNT(*) FROM documents WHERE user_id = ?", (user_id,))
+            chunk_count = self._count_scalar(conn, "SELECT COUNT(*) FROM vector_chunks WHERE user_id = ?", (user_id,))
+            query_count = self._count_scalar(conn, "SELECT COUNT(*) FROM query_runs WHERE user_id = ?", (user_id,))
+            finding_count = self._count_scalar(conn, "SELECT COUNT(*) FROM saved_findings WHERE user_id = ?", (user_id,))
+
+            if self.is_postgres:
+                try:
+                    db_bytes = self._count_scalar(conn, "SELECT pg_database_size(current_database())")
+                except Exception:
+                    db_bytes = 0
+                size_kb = round(db_bytes / 1024.0, 2)
+                engine_label = "PostgreSQL Cloud Vault (Permanent) + Per-User HNSW & BM25+ Store"
+                storage_location = "Cloud PostgreSQL (via DATABASE_URL)"
+            else:
+                db_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
+                wal_path = self.db_path + "-wal"
+                wal_size = os.path.getsize(wal_path) if os.path.exists(wal_path) else 0
+                size_kb = round((db_size + wal_size) / 1024.0, 2)
+                engine_label = "Multi-Tenant SQLite3 (WAL Mode) + Per-User HNSW & BM25+ Store"
+                storage_location = self.db_path
 
         return {
-            "engine": "Multi-Tenant SQLite3 (WAL Mode) + Per-User HNSW & BM25+ Store",
-            "sqliteFilePath": self.db_path,
+            "engine": engine_label,
+            "sqliteFilePath": storage_location,
             "vectorSnapshotPath": json_index_path,
             "uploadsDirPath": user_uploads_dir,
             "exportsDirPath": user_exports_dir,
-            "sqliteSizeKb": round((db_size + wal_size) / 1024.0, 2),
+            "sqliteSizeKb": size_kb,
             "vectorSnapshotSizeKb": round(json_size / 1024.0, 2),
             "uploadedRawFilesCount": len(upload_files),
             "exportedMarkdownReportsCount": len(export_files),
