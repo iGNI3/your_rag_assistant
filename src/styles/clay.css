@@ -177,6 +177,91 @@
   --vector-grid-stroke: rgba(88, 218, 242, 0.16);
 }
 
+/* ============================================================================
+   THEME 3: VISION CERAMIC STUDIO (INSPIRED BY APPLE VISION PRO BENTO MOCKUP)
+   - Warm Sunlit Stone Gallery Backdrop (#E6E4E0) with Sculpted Matte Spheres
+   - Frosted Pure Porcelain White Slabs (#FFFFFF / rgba(253,253,252,0.90))
+   - Deep Botanical Emerald (#0E7B58) Satin Pill Buttons & Sunlit Apricot (#F29B4B) Bento Accents
+   - Crisp 999px Vision Pro Pill Controls & Ultra-Soft Diffused Gallery Shadows
+   ============================================================================ */
+[data-theme='vision-ceramic'] {
+  --clay-canvas: #e6e4e0;
+  --clay-surface: rgba(253, 253, 252, 0.9);
+  --clay-surface-alt: #ffffff;
+  --clay-well: #f1f0ed;
+  --clay-well-deep: #e6e4df;
+  --clay-border-light: rgba(255, 255, 255, 0.96);
+  --clay-border-dark: rgba(24, 30, 28, 0.08);
+
+  /* Editorial Charcoal & Botanical Slate Ink */
+  --ink-primary: #121514;
+  --ink-secondary: #4f5854;
+  --ink-muted: #7b8580;
+  --ink-on-accent: #ffffff;
+
+  /* Botanical Emerald & Sunlit Apricot Ceramic Accents */
+  --clay-terracotta: #0e7b58;
+  --clay-terracotta-dark: #096044;
+  --clay-sage: #0e7b58;
+  --clay-sage-dark: #095e42;
+  --clay-ochre: #ef9446;
+  --clay-ochre-dark: #d87a2a;
+  --clay-cobalt: #154d3c;
+  --clay-cobalt-dark: #0c3629;
+  --clay-plum: #2c4a3e;
+  --clay-charcoal: #181d1b;
+  --ceramic-warm-card: #fae6d3;
+  --ceramic-warm-border: rgba(242, 155, 75, 0.35);
+
+  /* Ultra-Soft Diffused Studio Gallery Shadows (No Heavy Clay Bevels) */
+  --shadow-clay-card:
+    0 22px 48px rgba(24, 28, 26, 0.085),
+    0 4px 14px rgba(24, 28, 26, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.98);
+
+  --shadow-clay-sm:
+    0 10px 24px rgba(24, 28, 26, 0.065),
+    0 2px 6px rgba(24, 28, 26, 0.035),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+
+  --shadow-clay-pressed:
+    0 2px 6px rgba(24, 28, 26, 0.06),
+    inset 0 2px 6px rgba(24, 28, 26, 0.08);
+
+  --shadow-clay-well:
+    inset 0 2px 6px rgba(24, 28, 26, 0.055),
+    inset 0 1px 2px rgba(24, 28, 26, 0.04),
+    0 1px 0 rgba(255, 255, 255, 0.85);
+
+  --shadow-clay-terracotta:
+    0 10px 22px rgba(14, 123, 88, 0.24),
+    0 3px 8px rgba(14, 123, 88, 0.14),
+    inset 0 1px 1px rgba(255, 255, 255, 0.35);
+
+  --shadow-clay-sage:
+    0 10px 22px rgba(14, 123, 88, 0.22),
+    0 3px 8px rgba(14, 123, 88, 0.12),
+    inset 0 1px 1px rgba(255, 255, 255, 0.35);
+
+  --shadow-clay-cobalt:
+    0 10px 22px rgba(21, 77, 60, 0.24),
+    0 3px 8px rgba(21, 77, 60, 0.14),
+    inset 0 1px 1px rgba(255, 255, 255, 0.3);
+
+  --shadow-clay-ochre:
+    0 10px 22px rgba(239, 148, 70, 0.28),
+    0 3px 8px rgba(239, 148, 70, 0.16),
+    inset 0 1px 1px rgba(255, 255, 255, 0.45);
+
+  --shadow-clay-charcoal:
+    0 12px 24px rgba(18, 21, 20, 0.22),
+    inset 0 1px 1px rgba(255, 255, 255, 0.22);
+
+  --glass-blur: blur(28px) saturate(135%);
+  --vector-canvas-bg: #f6f5f2;
+  --vector-grid-stroke: rgba(18, 21, 20, 0.08);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -722,4 +807,231 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
   background: rgba(90, 145, 175, 0.45);
   border-radius: 8px;
   border: 2px solid transparent;
+}
+
+/* ============================================================================
+   VISION CERAMIC STUDIO: REMAPPED BENTO CARDS, PILL BUTTONS & GALLERY INPUTS
+   ============================================================================ */
+[data-theme='vision-ceramic'] .clay-sidebar,
+[data-theme='vision-ceramic'] .page-header-banner,
+[data-theme='vision-ceramic'] .clay-card {
+  border: 1px solid var(--clay-border-light);
+  border-radius: 26px;
+}
+
+[data-theme='vision-ceramic'] .clay-card-alt {
+  background-color: #ffffff;
+  border: 1px solid rgba(24, 30, 28, 0.06);
+  border-radius: 20px;
+  box-shadow:
+    0 12px 28px rgba(24, 28, 26, 0.06),
+    0 2px 6px rgba(24, 28, 26, 0.03);
+}
+
+/* Signature Editorial Vision Pro Bento Rhythm: Alternating Warm Sunlit Apricot Tiles */
+[data-theme='vision-ceramic'] .grid-2 > .clay-card-alt:nth-child(4n + 2),
+[data-theme='vision-ceramic'] .grid-2 > .clay-card-alt:nth-child(4n + 3) {
+  background-color: var(--ceramic-warm-card);
+  border-color: var(--ceramic-warm-border);
+  box-shadow:
+    0 16px 34px rgba(208, 126, 56, 0.14),
+    0 4px 10px rgba(24, 28, 26, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+/* Crisp Vision Pro Floating White Porcelain Buttons (999px Pills) */
+[data-theme='vision-ceramic'] .clay-btn {
+  border-radius: 999px;
+  background-color: #ffffff;
+  color: var(--ink-primary);
+  border: 1px solid rgba(24, 30, 28, 0.07);
+  box-shadow:
+    0 8px 20px rgba(24, 28, 26, 0.075),
+    0 2px 5px rgba(24, 28, 26, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+}
+
+[data-theme='vision-ceramic'] .clay-btn:hover:not(:disabled) {
+  background-color: #faf9f6;
+  border-color: rgba(24, 30, 28, 0.14);
+  transform: translateY(-1px);
+  box-shadow:
+    0 12px 24px rgba(24, 28, 26, 0.1),
+    0 3px 8px rgba(24, 28, 26, 0.05);
+}
+
+/* Solid Satin Botanical Emerald / Accent Ceramic Pill CTAs */
+[data-theme='vision-ceramic'] .clay-btn-terracotta,
+[data-theme='vision-ceramic'] .clay-btn-terracotta:hover:not(:disabled) {
+  background-color: var(--clay-terracotta);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: var(--shadow-clay-terracotta);
+}
+
+[data-theme='vision-ceramic'] .clay-btn-sage,
+[data-theme='vision-ceramic'] .clay-btn-sage:hover:not(:disabled) {
+  background-color: var(--clay-sage);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: var(--shadow-clay-sage);
+}
+
+[data-theme='vision-ceramic'] .clay-btn-cobalt,
+[data-theme='vision-ceramic'] .clay-btn-cobalt:hover:not(:disabled) {
+  background-color: var(--clay-cobalt);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: var(--shadow-clay-cobalt);
+}
+
+[data-theme='vision-ceramic'] .clay-btn-ochre,
+[data-theme='vision-ceramic'] .clay-btn-ochre:hover:not(:disabled) {
+  background-color: var(--clay-ochre);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow: var(--shadow-clay-ochre);
+}
+
+[data-theme='vision-ceramic'] .clay-btn-charcoal,
+[data-theme='vision-ceramic'] .clay-btn-charcoal:hover:not(:disabled) {
+  background-color: var(--clay-charcoal);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: var(--shadow-clay-charcoal);
+}
+
+/* Clean Porcelain Pill Tags (Removing Cyan Liquid Rim Borders) */
+[data-theme='vision-ceramic'] .clay-tag {
+  border-radius: 999px;
+  background-color: #ffffff;
+  color: var(--ink-secondary);
+  border: 1px solid rgba(24, 30, 28, 0.08);
+  box-shadow: 0 4px 12px rgba(24, 28, 26, 0.05);
+}
+
+[data-theme='vision-ceramic'] .clay-tag-terracotta {
+  background-color: var(--clay-terracotta);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: var(--shadow-clay-terracotta);
+}
+
+[data-theme='vision-ceramic'] .clay-tag-sage {
+  background-color: var(--clay-sage);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: var(--shadow-clay-sage);
+}
+
+[data-theme='vision-ceramic'] .clay-tag-cobalt {
+  background-color: var(--clay-cobalt);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: var(--shadow-clay-cobalt);
+}
+
+[data-theme='vision-ceramic'] .clay-tag-ochre {
+  background-color: var(--clay-ochre);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: var(--shadow-clay-ochre);
+}
+
+[data-theme='vision-ceramic'] .clay-tag-charcoal {
+  background-color: var(--clay-charcoal);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: var(--shadow-clay-charcoal);
+}
+
+/* Sidebar Navigation Pills (Crisp Porcelain + Deep Emerald Active Pill) */
+[data-theme='vision-ceramic'] .sidebar-nav-item {
+  border-radius: 999px;
+}
+
+[data-theme='vision-ceramic'] .sidebar-nav-item:hover {
+  background-color: #ffffff;
+  border-color: rgba(24, 30, 28, 0.07);
+}
+
+[data-theme='vision-ceramic'] .sidebar-nav-item.active {
+  background-color: var(--clay-terracotta);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: var(--shadow-clay-terracotta);
+}
+
+[data-theme='vision-ceramic'] .sidebar-nav-item.active .sidebar-step-badge {
+  background-color: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+/* Floating White Vision Pro Search & Prompt Inputs */
+[data-theme='vision-ceramic'] .clay-input,
+[data-theme='vision-ceramic'] .clay-select {
+  background-color: #ffffff;
+  border: 1px solid rgba(24, 30, 28, 0.09);
+  border-radius: 18px;
+  box-shadow:
+    0 6px 16px rgba(24, 28, 26, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+}
+
+[data-theme='vision-ceramic'] .clay-input:focus,
+[data-theme='vision-ceramic'] .clay-select:focus {
+  border-color: var(--clay-terracotta);
+  box-shadow:
+    0 8px 20px rgba(14, 123, 88, 0.12),
+    0 0 0 3px rgba(14, 123, 88, 0.12);
+}
+
+[data-theme='vision-ceramic'] .clay-well {
+  background-color: var(--clay-well);
+  border: 1px solid rgba(24, 30, 28, 0.05);
+  border-radius: 20px;
+}
+
+/* Floating Vision Pro Bottom Command Bar & Satin Emerald Send Pill */
+[data-theme='vision-ceramic'] .liquid-capsule-dock {
+  background-color: rgba(255, 255, 255, 0.94);
+  border-radius: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 22px 46px rgba(24, 28, 26, 0.11),
+    0 4px 12px rgba(24, 28, 26, 0.04);
+}
+
+[data-theme='vision-ceramic'] .liquid-orb-send-btn {
+  border-radius: 999px;
+  background-color: var(--clay-terracotta);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: var(--shadow-clay-terracotta);
+}
+
+/* Apple Vision Pro Style Capsule Switches & Sliders */
+[data-theme='vision-ceramic'] .clay-switch {
+  border-radius: 999px;
+}
+
+[data-theme='vision-ceramic'] .clay-switch-knob {
+  border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(18, 21, 20, 0.18);
+}
+
+[data-theme='vision-ceramic'] input[type='range'].clay-slider {
+  height: 10px;
+  border-radius: 999px;
+}
+
+[data-theme='vision-ceramic'] input[type='range'].clay-slider::-webkit-slider-thumb {
+  border: 3px solid #ffffff;
+  background-color: var(--clay-terracotta);
+  box-shadow: 0 4px 12px rgba(14, 123, 88, 0.32);
+}
+
+[data-theme='vision-ceramic'] ::-webkit-scrollbar-thumb {
+  background: rgba(18, 21, 20, 0.2);
 }

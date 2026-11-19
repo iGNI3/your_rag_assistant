@@ -1,15 +1,15 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Sun, Orbit, Palette, Check, Wind } from 'lucide-react';
+import { X, Sun, Orbit, Aperture, Palette, Check, Wind } from 'lucide-react';
 import { COLOR_PALETTES, ColorPaletteId } from '../themePalettes';
 
 interface ThemeSlideDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  themeMode: 'clay' | 'liquid-glass';
+  themeMode: 'clay' | 'liquid-glass' | 'vision-ceramic';
   paletteId: ColorPaletteId;
   spatialFlow: 'calm' | 'dynamic';
-  onChangeTheme: (mode: 'clay' | 'liquid-glass') => void;
+  onChangeTheme: (mode: 'clay' | 'liquid-glass' | 'vision-ceramic') => void;
   onChangePalette: (id: ColorPaletteId) => void;
   onChangeSpatialFlow: (flow: 'calm' | 'dynamic') => void;
 }
@@ -166,10 +166,22 @@ export const ThemeSlideDrawer: React.FC<ThemeSlideDrawerProps> = ({
                   className={`clay-btn ${
                     themeMode === 'liquid-glass' ? 'clay-btn-cobalt' : ''
                   }`}
-                  style={{ padding: '9px 18px', fontSize: '0.8rem' }}
+                  style={{ padding: '9px 16px', fontSize: '0.78rem' }}
                 >
                   <Orbit size={15} />
-                  <span>SPATIAL LIQUID GLASS</span>
+                  <span>LIQUID GLASS</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onChangeTheme('vision-ceramic')}
+                  className={`clay-btn ${
+                    themeMode === 'vision-ceramic' ? 'clay-btn-sage' : ''
+                  }`}
+                  style={{ padding: '9px 16px', fontSize: '0.78rem' }}
+                >
+                  <Aperture size={15} />
+                  <span>VISION CERAMIC</span>
                 </button>
               </div>
 

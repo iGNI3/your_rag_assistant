@@ -15,7 +15,7 @@ import { UserProfile } from '../types';
 import { setStoredAuthToken } from '../api';
 
 interface AuthPageProps {
-  themeMode: 'clay' | 'liquid-glass';
+  themeMode: 'clay' | 'liquid-glass' | 'vision-ceramic';
   activePaletteName: string;
   onOpenThemeDrawer: () => void;
   onAuthSuccess: (user: UserProfile, token: string) => void;
@@ -135,8 +135,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         >
           <Palette size={15} />
           <span>
-            THEME: {themeMode === 'clay' ? 'CLAY' : 'LIQUID GLASS'} •{' '}
-            {activePaletteName.toUpperCase()}
+            THEME:{' '}
+            {themeMode === 'clay'
+              ? 'CLAY'
+              : themeMode === 'liquid-glass'
+              ? 'LIQUID GLASS'
+              : 'VISION CERAMIC'}{' '}
+            • {activePaletteName.toUpperCase()}
           </span>
         </button>
       </div>

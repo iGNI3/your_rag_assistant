@@ -17,6 +17,7 @@ import {
   Check,
   Sun,
   Orbit,
+  Aperture,
   Server,
   Shield,
 } from 'lucide-react';
@@ -36,10 +37,10 @@ interface SettingsPageProps {
   user: UserProfile;
   config: RagPipelineConfig;
   modelCatalog: ModelPortalCatalogItem[];
-  themeMode: 'clay' | 'liquid-glass';
+  themeMode: 'clay' | 'liquid-glass' | 'vision-ceramic';
   spatialFlow: 'calm' | 'dynamic';
   paletteId: ColorPaletteId;
-  onChangeTheme: (mode: 'clay' | 'liquid-glass') => void;
+  onChangeTheme: (mode: 'clay' | 'liquid-glass' | 'vision-ceramic') => void;
   onChangeSpatialFlow: (flow: 'calm' | 'dynamic') => void;
   onChangePalette: (paletteId: ColorPaletteId) => void;
   onUpdateConfig: (partial: Partial<RagPipelineConfig>) => Promise<void>;
@@ -1251,7 +1252,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </h3>
               </div>
 
-              <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                 <button
                   type="button"
                   onClick={() => onChangeTheme('clay')}
@@ -1272,7 +1273,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   style={{ padding: '9px 16px', fontSize: '0.78rem' }}
                 >
                   <Orbit size={15} />
-                  <span>SPATIAL LIQUID GLASS</span>
+                  <span>LIQUID GLASS</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChangeTheme('vision-ceramic')}
+                  className={`clay-btn ${
+                    themeMode === 'vision-ceramic' ? 'clay-btn-sage' : ''
+                  }`}
+                  style={{ padding: '9px 16px', fontSize: '0.78rem' }}
+                >
+                  <Aperture size={15} />
+                  <span>VISION CERAMIC</span>
                 </button>
               </div>
             </div>

@@ -47,10 +47,11 @@ import { VectorSpaceCanvas } from './components/VectorSpaceCanvas';
 import { MetricsAndEvaluationSuite } from './components/MetricsAndEvaluationSuite';
 import { DatabaseAndFindingsVault } from './components/DatabaseAndFindingsVault';
 import { SpatialLiquidBackground } from './components/SpatialLiquidBackground';
+import { VisionCeramicBackground } from './components/VisionCeramicBackground';
 import { ThemeSlideDrawer } from './components/ThemeSlideDrawer';
 import { ColorPaletteId, getPaletteById } from './themePalettes';
 
-export type ThemeMode = 'clay' | 'liquid-glass';
+export type ThemeMode = 'clay' | 'liquid-glass' | 'vision-ceramic';
 
 interface PageRouteDef {
   id: AppPageId;
@@ -166,7 +167,11 @@ function parseHashToPage(): AppPageId {
 export const App: React.FC = () => {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     const saved = localStorage.getItem('clayrag_theme_mode');
-    return saved === 'liquid-glass' || saved === 'clay' ? saved : 'clay';
+    return saved === 'liquid-glass' ||
+      saved === 'clay' ||
+      saved === 'vision-ceramic'
+      ? saved
+      : 'clay';
   });
   const [paletteId, setPaletteId] = useState<ColorPaletteId>(() => {
     const saved = localStorage.getItem('clayrag_color_palette');
@@ -220,12 +225,15 @@ export const App: React.FC = () => {
     const varsToApply =
       themeMode === 'clay'
         ? activePalette.clayVars
-        : activePalette.liquidVars;
+        : themeMode === 'liquid-glass'
+        ? activePalette.liquidVars
+        : activePalette.ceramicVars;
 
     // Clear previous overrides first so switching modes stays clean
     const allKnownKeys = new Set([
       ...Object.keys(activePalette.clayVars),
       ...Object.keys(activePalette.liquidVars),
+      ...Object.keys(activePalette.ceramicVars),
     ]);
     allKnownKeys.forEach((k) => root.style.removeProperty(k));
     Object.entries(varsToApply).forEach(([k, val]) => {
@@ -526,6 +534,10 @@ export const App: React.FC = () => {
           flowIntensity={spatialFlow}
           palette={activePalette}
         />
+        <VisionCeramicBackground
+          active={themeMode === 'vision-ceramic'}
+          palette={activePalette}
+        />
         <div
           style={{
             minHeight: '100vh',
@@ -550,6 +562,10 @@ export const App: React.FC = () => {
         <SpatialLiquidBackground
           active={themeMode === 'liquid-glass'}
           flowIntensity={spatialFlow}
+          palette={activePalette}
+        />
+        <VisionCeramicBackground
+          active={themeMode === 'vision-ceramic'}
           palette={activePalette}
         />
         <AuthPage
@@ -597,6 +613,10 @@ export const App: React.FC = () => {
       <SpatialLiquidBackground
         active={themeMode === 'liquid-glass'}
         flowIntensity={spatialFlow}
+        palette={activePalette}
+      />
+      <VisionCeramicBackground
+        active={themeMode === 'vision-ceramic'}
         palette={activePalette}
       />
 
@@ -648,12 +668,14 @@ export const App: React.FC = () => {
                 >
                   {themeMode === 'clay'
                     ? 'TACTILE CLAY EDITION'
-                    : 'SPATIAL LIQUID GLASS'}
+                    : themeMode === 'liquid-glass'
+                    ? 'SPATIAL LIQUID GLASS'
+                    : 'VISION CERAMIC STUDIO'}
                 </div>
               </div>
             </div>
 
-            {/* Single Clean Theme Button -> Opens Slide-Over Theme Studio Drawer */}
+            {/* Single Clean Theme Button -> Opens Floating Theme Studio Popup */}
             <button
               type="button"
               onClick={() => setIsThemeDrawerOpen(true)}
@@ -681,8 +703,12 @@ export const App: React.FC = () => {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {themeMode === 'clay' ? 'CLAY' : 'GLASS'} •{' '}
-                {activePalette.name.split(' ')[0]}
+                {themeMode === 'clay'
+                  ? 'CLAY'
+                  : themeMode === 'liquid-glass'
+                  ? 'GLASS'
+                  : 'CERAMIC'}{' '}
+                • {activePalette.name.split(' ')[0]}
               </span>
             </button>
 
