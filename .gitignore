@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Local installers & binary artifacts
+*.msi
+*.exe
+
+# Local runtime data, SQLite vault & downloaded GGUF models
+data/
+models/*.gguf
+models/*.onnx
+models/*.safetensors
+models/*.bin
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
