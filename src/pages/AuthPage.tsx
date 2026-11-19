@@ -192,7 +192,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               className="font-display"
               style={{ fontSize: '1.48rem', fontWeight: 700 }}
             >
-              CLAYRAG WORKSPACE
+              RAG_BUDDY WORKSPACE
             </h1>
             <div
               className="font-mono"

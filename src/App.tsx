@@ -649,7 +649,7 @@ export const App: React.FC = () => {
                   className="font-display"
                   style={{ fontSize: '1.16rem', fontWeight: 700 }}
                 >
-                  CLAYRAG STUDIO
+                  RAG_BUDDY
                 </div>
                 <div
                   className="font-mono"

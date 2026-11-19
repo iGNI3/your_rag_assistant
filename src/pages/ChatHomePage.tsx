@@ -775,7 +775,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
             <textarea
               rows={2}
               className="clay-input"
-              placeholder="Message ClayRAG Assistant... (Press Enter to send, Shift+Enter for new line)"
+              placeholder="Message RAG_BUDDY Assistant... (Press Enter to send, Shift+Enter for new line)"
               value={promptInput}
               onChange={(e) => setPromptInput(e.target.value)}
               onKeyDown={handleKeyDown}
