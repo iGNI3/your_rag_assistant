@@ -38,28 +38,26 @@ export const ThemeSlideDrawer: React.FC<ThemeSlideDrawerProps> = ({
             padding: 24,
           }}
         >
-          {/* Click-outside subtle translucent backdrop */}
+          {/* Click-outside crisp translucent scrim (Zero extra backdrop-blur pass) */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.14 }}
             onClick={onClose}
             style={{
               position: 'fixed',
               inset: 0,
-              backgroundColor: 'rgba(10, 14, 22, 0.34)',
-              backdropFilter: 'blur(5px)',
-              WebkitBackdropFilter: 'blur(5px)',
+              backgroundColor: 'rgba(14, 16, 22, 0.42)',
             }}
           />
 
           {/* Floating Centered Theme & Palette Popup Card */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            initial={{ opacity: 0, scale: 0.96, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.92, y: 14 }}
-            transition={{ type: 'spring', stiffness: 360, damping: 28 }}
+            exit={{ opacity: 0, scale: 0.97, y: 6 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
             className="clay-card"
             style={{
               position: 'relative',
@@ -71,6 +69,10 @@ export const ThemeSlideDrawer: React.FC<ThemeSlideDrawerProps> = ({
               flexDirection: 'column',
               padding: '26px 28px',
               overflow: 'hidden',
+              backgroundColor:
+                themeMode === 'liquid-glass'
+                  ? 'rgba(252, 253, 255, 0.96)'
+                  : undefined,
             }}
           >
             {/* Floating Popup Header */}
@@ -238,10 +240,8 @@ export const ThemeSlideDrawer: React.FC<ThemeSlideDrawerProps> = ({
                 {COLOR_PALETTES.map((pal) => {
                   const isSelected = pal.id === paletteId;
                   return (
-                    <motion.div
+                    <div
                       key={pal.id}
-                      whileHover={{ y: -3, scale: 1.015 }}
-                      whileTap={{ scale: 0.985 }}
                       onClick={() => onChangePalette(pal.id)}
                       className="clay-card-alt"
                       style={{
@@ -311,7 +311,7 @@ export const ThemeSlideDrawer: React.FC<ThemeSlideDrawerProps> = ({
                           />
                         ))}
                       </div>
-                    </motion.div>
+                    </div>
                   );
                 })}
               </div>

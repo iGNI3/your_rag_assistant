@@ -246,12 +246,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     label: string;
     icon: React.ComponentType<{ size?: number | string }>;
   }> = [
-    { id: 'account', label: 'ACCOUNT MANAGER', icon: User },
-    { id: 'models', label: 'MODEL SELECTION', icon: Cpu },
-    { id: 'apikeys', label: 'API KEYS VAULT', icon: Key },
-    { id: 'offline', label: 'OFFLINE GGUF PORTAL', icon: HardDrive },
-    { id: 'preferences', label: 'APPEARANCE & DEFAULTS', icon: Sliders },
-  ];
+      { id: 'account', label: 'ACCOUNT MANAGER', icon: User },
+      { id: 'models', label: 'MODEL SELECTION', icon: Cpu },
+      { id: 'apikeys', label: 'API KEYS VAULT', icon: Key },
+      { id: 'offline', label: 'OFFLINE GGUF PORTAL', icon: HardDrive },
+      { id: 'preferences', label: 'APPEARANCE & DEFAULTS', icon: Sliders },
+    ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -815,16 +815,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </span>
             <div style={{ display: 'flex', gap: 8 }}>
               <span
-                className={`clay-tag ${
-                  daemonStatus?.ollamaOnline ? 'clay-tag-sage' : ''
-                }`}
+                className={`clay-tag ${daemonStatus?.ollamaOnline ? 'clay-tag-sage' : ''
+                  }`}
               >
                 OLLAMA: {daemonStatus?.ollamaOnline ? 'ONLINE' : 'STANDBY'}
               </span>
               <span
-                className={`clay-tag ${
-                  daemonStatus?.lmStudioOnline ? 'clay-tag-sage' : ''
-                }`}
+                className={`clay-tag ${daemonStatus?.lmStudioOnline ? 'clay-tag-sage' : ''
+                  }`}
               >
                 LM STUDIO: {daemonStatus?.lmStudioOnline ? 'ONLINE' : 'STANDBY'}
               </span>
@@ -1093,9 +1091,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           </div>
                           <button
                             type="button"
-                            className={`clay-btn ${
-                              isBound ? 'clay-btn-sage' : 'clay-btn-charcoal'
-                            }`}
+                            className={`clay-btn ${isBound ? 'clay-btn-sage' : 'clay-btn-charcoal'
+                              }`}
                             style={{ width: '100%', padding: '8px 12px', fontSize: '0.76rem' }}
                             onClick={async () => {
                               setScanInputPath(mod.fullPath);
@@ -1256,9 +1253,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <button
                   type="button"
                   onClick={() => onChangeTheme('clay')}
-                  className={`clay-btn ${
-                    themeMode === 'clay' ? 'clay-btn-terracotta' : ''
-                  }`}
+                  className={`clay-btn ${themeMode === 'clay' ? 'clay-btn-terracotta' : ''
+                    }`}
                   style={{ padding: '9px 16px', fontSize: '0.78rem' }}
                 >
                   <Sun size={15} />
@@ -1267,9 +1263,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <button
                   type="button"
                   onClick={() => onChangeTheme('liquid-glass')}
-                  className={`clay-btn ${
-                    themeMode === 'liquid-glass' ? 'clay-btn-cobalt' : ''
-                  }`}
+                  className={`clay-btn ${themeMode === 'liquid-glass' ? 'clay-btn-cobalt' : ''
+                    }`}
                   style={{ padding: '9px 16px', fontSize: '0.78rem' }}
                 >
                   <Orbit size={15} />
@@ -1278,9 +1273,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <button
                   type="button"
                   onClick={() => onChangeTheme('vision-ceramic')}
-                  className={`clay-btn ${
-                    themeMode === 'vision-ceramic' ? 'clay-btn-sage' : ''
-                  }`}
+                  className={`clay-btn ${themeMode === 'vision-ceramic' ? 'clay-btn-sage' : ''
+                    }`}
                   style={{ padding: '9px 16px', fontSize: '0.78rem' }}
                 >
                   <Aperture size={15} />
@@ -1392,18 +1386,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   <button
                     type="button"
                     onClick={() => onChangeSpatialFlow('dynamic')}
-                    className={`clay-btn ${
-                      spatialFlow === 'dynamic' ? 'clay-btn-sage' : ''
-                    }`}
+                    className={`clay-btn ${spatialFlow === 'dynamic' ? 'clay-btn-sage' : ''
+                      }`}
                   >
                     DYNAMIC ORBITAL FLOW
                   </button>
                   <button
                     type="button"
                     onClick={() => onChangeSpatialFlow('calm')}
-                    className={`clay-btn ${
-                      spatialFlow === 'calm' ? 'clay-btn-sage' : ''
-                    }`}
+                    className={`clay-btn ${spatialFlow === 'calm' ? 'clay-btn-sage' : ''
+                      }`}
                   >
                     CALM AMBIENT DRIFT
                   </button>

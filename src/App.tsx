@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
-import gsap from 'gsap';
+import { motion } from 'framer-motion';
 import {
   MessageSquare,
   Activity,
@@ -177,7 +176,7 @@ export const App: React.FC = () => {
     const saved = localStorage.getItem('clayrag_color_palette');
     return getPaletteById(saved).id;
   });
-  const [spatialFlow, setSpatialFlow] = useState<'calm' | 'dynamic'>('dynamic');
+  const [spatialFlow, setSpatialFlow] = useState<'calm' | 'dynamic'>('calm');
   const [isThemeDrawerOpen, setIsThemeDrawerOpen] = useState<boolean>(false);
 
   const activePalette = getPaletteById(paletteId);
@@ -226,8 +225,8 @@ export const App: React.FC = () => {
       themeMode === 'clay'
         ? activePalette.clayVars
         : themeMode === 'liquid-glass'
-        ? activePalette.liquidVars
-        : activePalette.ceramicVars;
+          ? activePalette.liquidVars
+          : activePalette.ceramicVars;
 
     // Clear previous overrides first so switching modes stays clean
     const allKnownKeys = new Set([
@@ -239,12 +238,6 @@ export const App: React.FC = () => {
     Object.entries(varsToApply).forEach(([k, val]) => {
       root.style.setProperty(k, val);
     });
-
-    gsap.fromTo(
-      '.clay-card, .page-header-banner, .clay-sidebar',
-      { y: 6, scale: 0.992 },
-      { y: 0, scale: 1, duration: 0.42, stagger: 0.025, ease: 'power3.out' }
-    );
   }, [themeMode, paletteId, activePalette]);
 
   const navigateToPage = (page: AppPageId) => {
@@ -669,8 +662,8 @@ export const App: React.FC = () => {
                   {themeMode === 'clay'
                     ? 'TACTILE CLAY EDITION'
                     : themeMode === 'liquid-glass'
-                    ? 'FROSTED CRYSTAL GLASS'
-                    : 'VISION CERAMIC STUDIO'}
+                      ? 'FROSTED CRYSTAL GLASS'
+                      : 'VISION CERAMIC STUDIO'}
                 </div>
               </div>
             </div>
@@ -706,8 +699,8 @@ export const App: React.FC = () => {
                 {themeMode === 'clay'
                   ? 'CLAY'
                   : themeMode === 'liquid-glass'
-                  ? 'GLASS'
-                  : 'CERAMIC'}{' '}
+                    ? 'GLASS'
+                    : 'CERAMIC'}{' '}
                 • {activePalette.name.split(' ')[0]}
               </span>
             </button>
@@ -727,9 +720,8 @@ export const App: React.FC = () => {
                           key={route.id}
                           type="button"
                           onClick={() => navigateToPage(route.id)}
-                          className={`sidebar-nav-item ${
-                            isActive ? 'active' : ''
-                          }`}
+                          className={`sidebar-nav-item ${isActive ? 'active' : ''
+                            }`}
                         >
                           <span className="sidebar-step-badge">
                             {route.step}
@@ -906,14 +898,12 @@ export const App: React.FC = () => {
           </header>
 
           {config && (
-            <AnimatePresence mode="wait">
-              <motion.main
-                key={activePage}
-                initial={{ opacity: 0, y: 14 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -12 }}
-                transition={{ type: 'spring', stiffness: 320, damping: 28 }}
-              >
+            <motion.main
+              key={activePage}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.14, ease: 'easeOut' }}
+            >
                 {activePage === 'chat' && (
                   <ChatHomePage
                     queryHistory={queryHistory}
@@ -1064,7 +1054,6 @@ export const App: React.FC = () => {
                   />
                 )}
               </motion.main>
-            </AnimatePresence>
           )}
         </div>
       </div>

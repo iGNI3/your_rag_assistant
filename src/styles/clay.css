@@ -165,7 +165,7 @@
     0 10px 24px rgba(18, 20, 26, 0.2),
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
 
-  --glass-blur: blur(26px) saturate(140%);
+  --glass-blur: none;
   --vector-canvas-bg: rgba(255, 255, 255, 0.72);
   --vector-grid-stroke: rgba(24, 25, 29, 0.08);
 }
@@ -250,7 +250,7 @@
     0 12px 24px rgba(18, 21, 20, 0.22),
     inset 0 1px 1px rgba(255, 255, 255, 0.22);
 
-  --glass-blur: blur(28px) saturate(135%);
+  --glass-blur: none;
   --vector-canvas-bg: #f6f5f2;
   --vector-grid-stroke: rgba(18, 21, 20, 0.08);
 }
@@ -269,15 +269,20 @@ body {
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
   overflow-x: hidden;
-  transition: background-color 0.4s ease, color 0.3s ease;
 }
 
-h1, h2, h3, h4, .font-display {
+h1,
+h2,
+h3,
+h4,
+.font-display {
   font-family: 'Space Grotesk', sans-serif;
   letter-spacing: -0.02em;
 }
 
-code, pre, .font-mono {
+code,
+pre,
+.font-mono {
   font-family: 'JetBrains Mono', monospace;
 }
 
@@ -301,8 +306,6 @@ code, pre, .font-mono {
   position: sticky;
   top: 24px;
   background-color: var(--clay-surface);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
   border-radius: 30px;
   border: 1.5px solid var(--clay-border-light);
   box-shadow: var(--shadow-clay-card);
@@ -312,7 +315,6 @@ code, pre, .font-mono {
   justify-content: space-between;
   min-height: calc(100vh - 48px);
   gap: 18px;
-  transition: background-color 0.35s ease, box-shadow 0.35s ease, border-color 0.35s ease;
 }
 
 .sidebar-group-title {
@@ -341,7 +343,7 @@ code, pre, .font-mono {
   font-weight: 700;
   text-align: left;
   cursor: pointer;
-  transition: all 0.18s ease;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
 .sidebar-nav-item:hover {
@@ -394,8 +396,6 @@ code, pre, .font-mono {
 
 .page-header-banner {
   background-color: var(--clay-surface);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
   border-radius: 28px;
   border: 1.5px solid var(--clay-border-light);
   box-shadow: var(--shadow-clay-card);
@@ -405,13 +405,10 @@ code, pre, .font-mono {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 20px;
-  transition: background-color 0.35s ease, box-shadow 0.35s ease;
 }
 
 .page-footer-nav {
   background-color: var(--clay-surface);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
   border-radius: 24px;
   border: 1.5px solid var(--clay-border-light);
   box-shadow: var(--shadow-clay-sm);
@@ -424,28 +421,23 @@ code, pre, .font-mono {
   margin-top: 8px;
 }
 
-/* Primary Slab Card (Clay or Smoked Cyan-Rim Liquid Glass) */
+/* Primary Slab Card */
 .clay-card {
   background-color: var(--clay-surface);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
   border-radius: 28px;
   border: 1.5px solid var(--clay-border-light);
   box-shadow: var(--shadow-clay-card);
   padding: 28px 30px;
   position: relative;
-  transition: background-color 0.35s ease, box-shadow 0.35s ease, border-color 0.35s ease;
+  contain: layout style;
 }
 
 .clay-card-alt {
   background-color: var(--clay-surface-alt);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
   border-radius: 22px;
   border: 1.5px solid var(--clay-border-light);
   box-shadow: var(--shadow-clay-sm);
   padding: 20px 22px;
-  transition: background-color 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
 }
 
 /* Recessed Well (Inputs, Canvases, Tracks) */
@@ -455,7 +447,6 @@ code, pre, .font-mono {
   border: 1.5px solid var(--clay-border-light);
   box-shadow: var(--shadow-clay-well);
   padding: 20px 22px;
-  transition: background-color 0.3s ease, box-shadow 0.3s ease;
 }
 
 .clay-input {
@@ -508,8 +499,6 @@ code, pre, .font-mono {
   justify-content: center;
   gap: 9px;
   background-color: var(--clay-surface);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
   color: var(--ink-primary);
   border: 1.5px solid var(--clay-border-light);
   border-radius: 17px;
@@ -520,7 +509,7 @@ code, pre, .font-mono {
   font-weight: 700;
   cursor: pointer;
   user-select: none;
-  transition: all 0.18s ease;
+  transition: background-color 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
 }
 
 [data-theme='liquid-glass'] .clay-btn {
@@ -807,18 +796,24 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
   .app-multi-page-shell {
     grid-template-columns: 1fr;
   }
+
   .clay-sidebar {
     position: relative;
     top: 0;
     min-height: auto;
   }
-  .grid-3, .grid-4 {
+
+  .grid-3,
+  .grid-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 780px) {
-  .grid-2, .grid-3, .grid-4 {
+
+  .grid-2,
+  .grid-3,
+  .grid-4 {
     grid-template-columns: 1fr;
   }
 }
@@ -859,8 +854,8 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
 }
 
 /* Signature Editorial Vision Pro Bento Rhythm: Alternating Warm Sunlit Apricot Tiles */
-[data-theme='vision-ceramic'] .grid-2 > .clay-card-alt:nth-child(4n + 2),
-[data-theme='vision-ceramic'] .grid-2 > .clay-card-alt:nth-child(4n + 3) {
+[data-theme='vision-ceramic'] .grid-2>.clay-card-alt:nth-child(4n + 2),
+[data-theme='vision-ceramic'] .grid-2>.clay-card-alt:nth-child(4n + 3) {
   background-color: var(--ceramic-warm-card);
   border-color: var(--ceramic-warm-border);
   box-shadow:
@@ -1070,18 +1065,15 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
    FROSTED CRYSTAL LIQUID GLASS (iDRAFT ARCHITECTURAL OS FRAME & BENTO SYSTEM)
    ============================================================================ */
 
-/* Outer Floating Frosted Crystal Glass OS Window over 3D Silk Ribbons */
+/* Outer Floating Frosted Crystal Glass OS Window over 3D Silk Ribbons (Zero Scroll-Blur Lag!) */
 [data-theme='liquid-glass'] .app-multi-page-shell {
-  background-color: var(--liquid-shell-bg, rgba(246, 247, 250, 0.45));
-  backdrop-filter: blur(28px) saturate(145%);
-  -webkit-backdrop-filter: blur(28px) saturate(145%);
+  background-color: var(--liquid-shell-bg, rgba(246, 247, 250, 0.62));
   border-radius: 36px;
-  border: 1.5px solid rgba(255, 255, 255, 0.82);
+  border: 1.5px solid rgba(255, 255, 255, 0.86);
   box-shadow:
-    0 34px 74px rgba(18, 20, 26, 0.16),
-    0 8px 24px rgba(18, 20, 26, 0.06),
-    inset 0 1.5px 2px rgba(255, 255, 255, 0.94),
-    0 0 0 1px rgba(255, 255, 255, 0.35);
+    0 24px 52px rgba(18, 20, 26, 0.14),
+    0 6px 18px rgba(18, 20, 26, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
   margin: 22px auto;
   min-height: calc(100vh - 44px);
   padding: 22px 26px;
@@ -1159,25 +1151,21 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
   box-shadow: none;
 }
 
-/* Airy Translucent Top Header Banner inside the Crystal Frame */
+/* Airy Translucent Top Header Banner inside the Crystal Frame (Inherits Outer Frame Blur — Zero Nested Blur!) */
 [data-theme='liquid-glass'] .page-header-banner {
-  background-color: rgba(255, 255, 255, 0.36);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  background-color: rgba(255, 255, 255, 0.46);
   border-radius: 24px;
-  border: 1.5px solid rgba(255, 255, 255, 0.78);
+  border: 1.5px solid rgba(255, 255, 255, 0.8);
   box-shadow:
-    0 10px 28px rgba(18, 20, 26, 0.045),
+    0 8px 22px rgba(18, 20, 26, 0.045),
     inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }
 
-/* Primary Frosted Crystal Slabs */
+/* Primary Frosted Crystal Slabs (Inherits Outer Frame Blur — Zero Nested Blur!) */
 [data-theme='liquid-glass'] .clay-card {
-  background-color: var(--clay-surface);
-  backdrop-filter: blur(24px) saturate(135%);
-  -webkit-backdrop-filter: blur(24px) saturate(135%);
+  background-color: rgba(255, 255, 255, 0.68);
   border-radius: 26px;
-  border: 1.5px solid rgba(255, 255, 255, 0.84);
+  border: 1.5px solid rgba(255, 255, 255, 0.86);
   box-shadow: var(--shadow-clay-card);
 }
 
@@ -1199,8 +1187,8 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
    2. Frosted Crystal Translucent Glass Card (Soft Silk Refraction)
    3. Pure Solid Matte White Card (#FFFFFF)
    ============================================================================ */
-[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1),
-[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child {
+[data-theme='liquid-glass'] .page-stage .grid-3>.clay-card:nth-child(3n + 1),
+[data-theme='liquid-glass'] .page-stage .grid-2>.clay-card-alt:first-child {
   background-color: var(--liquid-obsidian, #1b1c20);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -1215,48 +1203,46 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
-[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1) .clay-tag,
-[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child .clay-tag {
+[data-theme='liquid-glass'] .page-stage .grid-3>.clay-card:nth-child(3n + 1) .clay-tag,
+[data-theme='liquid-glass'] .page-stage .grid-2>.clay-card-alt:first-child .clay-tag {
   background-color: rgba(255, 255, 255, 0.14);
   color: #ffffff;
   border-color: rgba(255, 255, 255, 0.22);
   box-shadow: none;
 }
 
-[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1) .clay-well,
-[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child .clay-well {
+[data-theme='liquid-glass'] .page-stage .grid-3>.clay-card:nth-child(3n + 1) .clay-well,
+[data-theme='liquid-glass'] .page-stage .grid-2>.clay-card-alt:first-child .clay-well {
   background-color: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.16);
 }
 
-[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1) .clay-btn,
-[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child .clay-btn {
+[data-theme='liquid-glass'] .page-stage .grid-3>.clay-card:nth-child(3n + 1) .clay-btn,
+[data-theme='liquid-glass'] .page-stage .grid-2>.clay-card-alt:first-child .clay-btn {
   background-color: #ffffff;
   color: #18191d;
   border-color: transparent;
 }
 
 /* Crisp White Floating Inputs & Selects (Always High-Contrast Dark Ink on White) */
-[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1) .clay-input,
-[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1) .clay-select,
-[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child .clay-input,
-[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child .clay-select {
+[data-theme='liquid-glass'] .page-stage .grid-3>.clay-card:nth-child(3n + 1) .clay-input,
+[data-theme='liquid-glass'] .page-stage .grid-3>.clay-card:nth-child(3n + 1) .clay-select,
+[data-theme='liquid-glass'] .page-stage .grid-2>.clay-card-alt:first-child .clay-input,
+[data-theme='liquid-glass'] .page-stage .grid-2>.clay-card-alt:first-child .clay-select {
   background-color: #ffffff;
   color: #18191d;
   --ink-primary: #18191d;
   --ink-muted: #767a85;
 }
 
-/* Middle Card in 3-Col Grids: Translucent Frosted Crystal (like "Weekly progress") */
-[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 2) {
-  background-color: rgba(255, 255, 255, 0.34);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-  border: 1.5px solid rgba(255, 255, 255, 0.78);
+/* Middle Card in 3-Col Grids: Translucent Frosted Crystal (Inherits Outer Frame Blur — Zero Nested Blur!) */
+[data-theme='liquid-glass'] .page-stage .grid-3>.clay-card:nth-child(3n + 2) {
+  background-color: rgba(255, 255, 255, 0.38);
+  border: 1.5px solid rgba(255, 255, 255, 0.82);
 }
 
 /* Third Card in 3-Col Grids: Pure Crisp Matte White (like "Month progress") */
-[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 3) {
+[data-theme='liquid-glass'] .page-stage .grid-3>.clay-card:nth-child(3n + 3) {
   background-color: #ffffff;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -1346,4 +1332,22 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
 
 [data-theme='liquid-glass'] ::-webkit-scrollbar-thumb {
   background: rgba(24, 25, 29, 0.22);
+}
+
+/* Lightweight GPU-Composited Drift for Optional Liquid Glass Dynamic Flow */
+@keyframes silkStageDrift {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(14px, -10px, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.silk-stage-drift {
+  will-change: transform;
+  animation: silkStageDrift 16s ease-in-out infinite;
 }
