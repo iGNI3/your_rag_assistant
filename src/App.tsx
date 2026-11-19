@@ -14,8 +14,7 @@ import {
   Shield,
   ArrowLeft,
   ArrowRight,
-  Sun,
-  Orbit,
+  Palette,
   Settings,
   LogOut,
   User,
@@ -48,11 +47,8 @@ import { VectorSpaceCanvas } from './components/VectorSpaceCanvas';
 import { MetricsAndEvaluationSuite } from './components/MetricsAndEvaluationSuite';
 import { DatabaseAndFindingsVault } from './components/DatabaseAndFindingsVault';
 import { SpatialLiquidBackground } from './components/SpatialLiquidBackground';
-import {
-  COLOR_PALETTES,
-  ColorPaletteId,
-  getPaletteById,
-} from './themePalettes';
+import { ThemeSlideDrawer } from './components/ThemeSlideDrawer';
+import { ColorPaletteId, getPaletteById } from './themePalettes';
 
 export type ThemeMode = 'clay' | 'liquid-glass';
 
@@ -177,6 +173,7 @@ export const App: React.FC = () => {
     return getPaletteById(saved).id;
   });
   const [spatialFlow, setSpatialFlow] = useState<'calm' | 'dynamic'>('dynamic');
+  const [isThemeDrawerOpen, setIsThemeDrawerOpen] = useState<boolean>(false);
 
   const activePalette = getPaletteById(paletteId);
 
@@ -557,12 +554,23 @@ export const App: React.FC = () => {
         />
         <AuthPage
           themeMode={themeMode}
-          onChangeTheme={setThemeMode}
+          activePaletteName={activePalette.name}
+          onOpenThemeDrawer={() => setIsThemeDrawerOpen(true)}
           onAuthSuccess={async (userObj) => {
             setCurrentUser(userObj);
             await fetchFullState();
             navigateToPage('chat');
           }}
+        />
+        <ThemeSlideDrawer
+          isOpen={isThemeDrawerOpen}
+          onClose={() => setIsThemeDrawerOpen(false)}
+          themeMode={themeMode}
+          paletteId={paletteId}
+          spatialFlow={spatialFlow}
+          onChangeTheme={setThemeMode}
+          onChangePalette={setPaletteId}
+          onChangeSpatialFlow={setSpatialFlow}
         />
       </>
     );
@@ -645,91 +653,38 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Dual Theme Switcher Capsule inside Sidebar */}
-            <div
-              className="clay-well"
+            {/* Single Clean Theme Button -> Opens Slide-Over Theme Studio Drawer */}
+            <button
+              type="button"
+              onClick={() => setIsThemeDrawerOpen(true)}
+              className="clay-btn"
               style={{
+                width: '100%',
                 marginTop: 14,
-                padding: 6,
-                borderRadius: 18,
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 6,
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setThemeMode('clay')}
-                className={`clay-btn ${
-                  themeMode === 'clay' ? 'clay-btn-terracotta' : ''
-                }`}
-                style={{
-                  padding: '8px 10px',
-                  fontSize: '0.73rem',
-                  borderRadius: 13,
-                }}
-              >
-                <Sun size={13} />
-                <span>CLAY</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setThemeMode('liquid-glass')}
-                className={`clay-btn ${
-                  themeMode === 'liquid-glass' ? 'clay-btn-cobalt' : ''
-                }`}
-                style={{
-                  padding: '8px 10px',
-                  fontSize: '0.73rem',
-                  borderRadius: 13,
-                }}
-              >
-                <Orbit size={13} />
-                <span>LIQUID GLASS</span>
-              </button>
-            </div>
-
-            {/* Quick 9-Palette Swatch Bar */}
-            <div
-              className="clay-well"
-              style={{
-                marginTop: 8,
-                padding: '7px 9px',
-                borderRadius: 14,
-                display: 'flex',
-                alignItems: 'center',
+                padding: '11px 14px',
                 justifyContent: 'space-between',
-                gap: 5,
+                fontSize: '0.78rem',
               }}
             >
-              {COLOR_PALETTES.map((pal) => {
-                const isActive = pal.id === paletteId;
-                const primarySwatch = pal.swatches[1] || pal.swatches[0];
-                return (
-                  <button
-                    key={pal.id}
-                    type="button"
-                    title={`Palette: ${pal.name}`}
-                    onClick={() => setPaletteId(pal.id)}
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 8,
-                      backgroundColor: primarySwatch,
-                      border: isActive
-                        ? '2.5px solid #ffffff'
-                        : '1.5px solid rgba(255,255,255,0.45)',
-                      boxShadow: isActive
-                        ? '0 0 0 2px var(--clay-terracotta)'
-                        : 'inset 1px 1px 2px rgba(255,255,255,0.45)',
-                      cursor: 'pointer',
-                      transition: 'transform 0.15s ease',
-                      transform: isActive ? 'scale(1.15)' : 'scale(1)',
-                    }}
-                  />
-                );
-              })}
-            </div>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                <Palette size={15} />
+                <span>THEME</span>
+              </span>
+              <span
+                className="clay-tag"
+                style={{
+                  padding: '3px 9px',
+                  fontSize: '0.64rem',
+                  maxWidth: 155,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {themeMode === 'clay' ? 'CLAY' : 'GLASS'} •{' '}
+                {activePalette.name.split(' ')[0]}
+              </span>
+            </button>
 
             <nav style={{ marginTop: 4 }}>
               {routeGroups.map((grp) => (
@@ -1087,6 +1042,18 @@ export const App: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Global Slide-Over Theme & Color Palette Drawer */}
+      <ThemeSlideDrawer
+        isOpen={isThemeDrawerOpen}
+        onClose={() => setIsThemeDrawerOpen(false)}
+        themeMode={themeMode}
+        paletteId={paletteId}
+        spatialFlow={spatialFlow}
+        onChangeTheme={setThemeMode}
+        onChangePalette={setPaletteId}
+        onChangeSpatialFlow={setSpatialFlow}
+      />
     </>
   );
 };

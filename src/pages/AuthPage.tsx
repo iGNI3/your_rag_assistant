@@ -8,8 +8,7 @@ import {
   Mail,
   User,
   Shield,
-  Sun,
-  Orbit,
+  Palette,
   KeyRound,
 } from 'lucide-react';
 import { UserProfile } from '../types';
@@ -17,13 +16,15 @@ import { setStoredAuthToken } from '../api';
 
 interface AuthPageProps {
   themeMode: 'clay' | 'liquid-glass';
-  onChangeTheme: (mode: 'clay' | 'liquid-glass') => void;
+  activePaletteName: string;
+  onOpenThemeDrawer: () => void;
   onAuthSuccess: (user: UserProfile, token: string) => void;
 }
 
 export const AuthPage: React.FC<AuthPageProps> = ({
   themeMode,
-  onChangeTheme,
+  activePaletteName,
+  onOpenThemeDrawer,
   onAuthSuccess,
 }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -117,41 +118,26 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         zIndex: 1,
       }}
     >
-      {/* Top Floating Theme Toggle */}
+      {/* Top Floating Single Theme Button -> Opens Slide-Over Theme Drawer */}
       <div
-        className="clay-well"
         style={{
           position: 'fixed',
           top: 22,
           right: 28,
-          padding: 6,
-          borderRadius: 20,
-          display: 'flex',
-          gap: 6,
           zIndex: 20,
         }}
       >
         <button
           type="button"
-          onClick={() => onChangeTheme('clay')}
-          className={`clay-btn ${
-            themeMode === 'clay' ? 'clay-btn-terracotta' : ''
-          }`}
-          style={{ padding: '7px 13px', fontSize: '0.74rem' }}
+          onClick={onOpenThemeDrawer}
+          className="clay-btn"
+          style={{ padding: '10px 16px', fontSize: '0.78rem' }}
         >
-          <Sun size={13} />
-          <span>CLAY</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => onChangeTheme('liquid-glass')}
-          className={`clay-btn ${
-            themeMode === 'liquid-glass' ? 'clay-btn-cobalt' : ''
-          }`}
-          style={{ padding: '7px 13px', fontSize: '0.74rem' }}
-        >
-          <Orbit size={13} />
-          <span>LIQUID GLASS</span>
+          <Palette size={15} />
+          <span>
+            THEME: {themeMode === 'clay' ? 'CLAY' : 'LIQUID GLASS'} •{' '}
+            {activePaletteName.toUpperCase()}
+          </span>
         </button>
       </div>
 
