@@ -17,6 +17,8 @@ import {
   Settings,
   LogOut,
   User,
+  Menu,
+  X,
 } from 'lucide-react';
 import {
   AgenticRagResponse,
@@ -178,6 +180,7 @@ export const App: React.FC = () => {
   });
   const [spatialFlow, setSpatialFlow] = useState<'calm' | 'dynamic'>('calm');
   const [isThemeDrawerOpen, setIsThemeDrawerOpen] = useState<boolean>(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState<boolean>(false);
 
   const activePalette = getPaletteById(paletteId);
 
@@ -243,6 +246,7 @@ export const App: React.FC = () => {
   const navigateToPage = (page: AppPageId) => {
     window.location.hash = `/${page}`;
     setActivePage(page);
+    setIsMobileNavOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -614,8 +618,94 @@ export const App: React.FC = () => {
       />
 
       <div className="app-multi-page-shell">
-        {/* Left Sculpted Clay / Liquid Glass Sidebar */}
-        <aside className="clay-sidebar">
+        {/* Mobile & Tablet Sticky Header Bar (Hidden on Desktop > 1024px) */}
+        <div className="mobile-top-bar">
+          <button
+            type="button"
+            onClick={() => setIsMobileNavOpen((v) => !v)}
+            className="clay-btn"
+            style={{ padding: '8px 11px' }}
+            aria-label="Toggle Navigation Menu"
+          >
+            {isMobileNavOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
+
+          <div
+            onClick={() => navigateToPage('chat')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 9,
+              minWidth: 0,
+              cursor: 'pointer',
+              flex: 1,
+            }}
+          >
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 11,
+                backgroundColor: 'var(--clay-terracotta)',
+                color: '#FAF6F0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <Layers size={16} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div
+                className="font-display"
+                style={{
+                  fontSize: '0.96rem',
+                  fontWeight: 700,
+                  lineHeight: 1.15,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                RAG_BUDDY
+              </div>
+              <div
+                className="font-mono"
+                style={{
+                  fontSize: '0.62rem',
+                  color: 'var(--ink-muted)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {currentPageDef.sidebarLabel}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsThemeDrawerOpen(true)}
+            className="clay-btn"
+            style={{ padding: '8px 11px' }}
+            aria-label="Open Theme Selector"
+          >
+            <Palette size={16} />
+          </button>
+        </div>
+
+        {/* Mobile Drawer Backdrop Scrim */}
+        {isMobileNavOpen && (
+          <div
+            className="mobile-nav-scrim"
+            onClick={() => setIsMobileNavOpen(false)}
+          />
+        )}
+
+        {/* Left Sculpted Clay / Liquid Glass / Vision Ceramic Sidebar (Slide-Over Drawer on Mobile) */}
+        <aside className={`clay-sidebar ${isMobileNavOpen ? 'mobile-open' : ''}`}>
           <div>
             <div
               onClick={() => navigateToPage('chat')}

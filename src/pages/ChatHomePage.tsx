@@ -749,22 +749,14 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
         />
 
         <form onSubmit={handleSubmit}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'auto 1fr auto',
-              gap: 12,
-              alignItems: 'center',
-              marginBottom: 12,
-            }}
-          >
+          <div className="chat-composer-grid">
             {/* Direct File / OCR Image Upload Button inside Chat Bar */}
             <motion.button
               whileHover={{ y: -2 }}
               whileTap={{ y: 1 }}
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="clay-btn"
+              className="clay-btn chat-composer-attach"
               title="Attach PDF, Scanned Image for OCR, DOCX, XLSX, CSV, HTML, or Markdown"
               style={{ padding: '14px 16px' }}
             >
@@ -774,7 +766,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
 
             <textarea
               rows={2}
-              className="clay-input"
+              className="clay-input chat-composer-input"
               placeholder="Message RAG_BUDDY Assistant... (Press Enter to send, Shift+Enter for new line)"
               value={promptInput}
               onChange={(e) => setPromptInput(e.target.value)}
@@ -791,7 +783,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
               whileTap={{ y: 2, scale: 0.98 }}
               type="submit"
               disabled={isExecuting || !promptInput.trim()}
-              className="clay-btn clay-btn-terracotta liquid-orb-send-btn"
+              className="clay-btn clay-btn-terracotta liquid-orb-send-btn chat-composer-send"
               style={{ padding: '15px 28px', fontSize: '0.94rem' }}
             >
               <Send size={17} />

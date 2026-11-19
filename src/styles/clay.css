@@ -1351,3 +1351,229 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
   will-change: transform;
   animation: silkStageDrift 16s ease-in-out infinite;
 }
+
+/* ============================================================================
+   MOBILE & TABLET RESPONSIVE LAYOUT SYSTEM (ALL 3 THEMES)
+   ============================================================================ */
+.mobile-top-bar {
+  display: none;
+}
+
+.mobile-nav-scrim {
+  display: none;
+}
+
+.chat-composer-grid {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.auth-theme-bar {
+  position: fixed;
+  top: 22px;
+  right: 28px;
+  z-index: 20;
+}
+
+/* Prevent horizontal page bleed from wide code blocks, tables, or SVG charts */
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+pre,
+table {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 1024px) {
+  .app-multi-page-shell {
+    grid-template-columns: 1fr;
+    padding: 14px 16px 28px;
+    gap: 16px;
+  }
+
+  [data-theme='liquid-glass'] .app-multi-page-shell {
+    margin: 10px;
+    border-radius: 24px;
+    padding: 14px;
+    min-height: calc(100vh - 20px);
+  }
+
+  .mobile-top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    position: sticky;
+    top: 10px;
+    z-index: 80;
+    background-color: var(--clay-surface);
+    border: 1.5px solid var(--clay-border-light);
+    border-radius: 20px;
+    box-shadow: var(--shadow-clay-sm);
+    padding: 10px 12px;
+  }
+
+  [data-theme='liquid-glass'] .mobile-top-bar {
+    background-color: rgba(255, 255, 255, 0.94);
+    border-radius: 999px;
+  }
+
+  .mobile-nav-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    background-color: rgba(14, 16, 22, 0.44);
+  }
+
+  .clay-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(312px, 86vw);
+    max-height: 100dvh;
+    min-height: 100dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    z-index: 95;
+    border-radius: 0 24px 24px 0;
+    transform: translateX(-110%);
+    transition: transform 0.2s ease-out;
+  }
+
+  [data-theme='liquid-glass'] .clay-sidebar {
+    min-height: 100dvh;
+    border-radius: 0 24px 24px 0;
+  }
+
+  .clay-sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .page-stage {
+    gap: 16px;
+    padding-bottom: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-multi-page-shell {
+    padding: 10px 10px 24px;
+    gap: 12px;
+  }
+
+  [data-theme='liquid-glass'] .app-multi-page-shell {
+    margin: 6px;
+    border-radius: 20px;
+    padding: 10px;
+  }
+
+  .page-header-banner {
+    padding: 16px 16px;
+    border-radius: 20px;
+    gap: 12px;
+  }
+
+  .page-header-banner h1 {
+    font-size: 1.24rem !important;
+    line-height: 1.25;
+  }
+
+  .clay-card {
+    padding: 16px 15px;
+    border-radius: 20px;
+  }
+
+  .clay-card-alt {
+    padding: 14px 14px;
+    border-radius: 16px;
+  }
+
+  .clay-well {
+    padding: 13px 13px;
+    border-radius: 16px;
+  }
+
+  .clay-btn {
+    padding: 9px 13px;
+    font-size: 0.78rem;
+    gap: 6px;
+  }
+
+  .clay-tag {
+    padding: 4px 9px;
+    font-size: 0.64rem;
+  }
+
+  /* Prevent iOS Safari auto-zoom on form field focus */
+  .clay-input,
+  .clay-select {
+    font-size: 16px !important;
+    padding: 11px 14px;
+  }
+
+  /* Stack Chat Composer cleanly: Full-width textarea on top, Attach + Send pills below */
+  .chat-composer-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .chat-composer-input {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .chat-composer-attach {
+    grid-row: 2;
+    width: 100%;
+    padding: 11px 12px !important;
+    font-size: 0.76rem !important;
+  }
+
+  .chat-composer-send {
+    grid-row: 2;
+    width: 100%;
+    padding: 11px 14px !important;
+    font-size: 0.82rem !important;
+  }
+
+  /* Auth screen: Theme button sits above the login card cleanly instead of overlapping */
+  .auth-theme-bar {
+    position: static;
+    width: 100%;
+    max-width: 520px;
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 14px;
+  }
+
+  .auth-card {
+    padding: 22px 18px !important;
+  }
+
+  /* Theme Popup: Compact padding & 2-column palette grid on phones */
+  .theme-popup-card {
+    padding: 18px 15px !important;
+    max-height: 90dvh !important;
+  }
+
+  .theme-popup-card .grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .grid-2,
+  .grid-3,
+  .grid-4 {
+    gap: 14px;
+  }
+}

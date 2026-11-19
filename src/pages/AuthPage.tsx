@@ -122,15 +122,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         zIndex: 1,
       }}
     >
-      {/* Top Floating Single Theme Button -> Opens Slide-Over Theme Drawer */}
-      <div
-        style={{
-          position: 'fixed',
-          top: 22,
-          right: 28,
-          zIndex: 20,
-        }}
-      >
+      {/* Top Floating Single Theme Button -> Opens Floating Theme Popup */}
+      <div className="auth-theme-bar">
         <button
           type="button"
           onClick={onOpenThemeDrawer}
@@ -155,7 +148,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         initial={{ opacity: 0, y: 18, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: 'spring', stiffness: 280, damping: 26 }}
-        className="clay-card"
+        className="clay-card auth-card"
         style={{
           width: '100%',
           maxWidth: 520,

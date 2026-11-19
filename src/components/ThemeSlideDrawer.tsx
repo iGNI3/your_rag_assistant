@@ -58,7 +58,7 @@ export const ThemeSlideDrawer: React.FC<ThemeSlideDrawerProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 6 }}
             transition={{ duration: 0.15, ease: 'easeOut' }}
-            className="clay-card"
+            className="clay-card theme-popup-card"
             style={{
               position: 'relative',
               zIndex: 101,
@@ -146,7 +146,8 @@ export const ThemeSlideDrawer: React.FC<ThemeSlideDrawerProps> = ({
                 style={{
                   padding: 6,
                   borderRadius: 18,
-                  display: 'inline-flex',
+                  display: 'flex',
+                  flexWrap: 'wrap',
                   gap: 8,
                 }}
               >
