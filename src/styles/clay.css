@@ -87,94 +87,87 @@
 }
 
 /* ============================================================================
-   THEME 2: SPATIAL LIQUID GLASS (MATCHING USER REFERENCE MOCKUP)
-   - Deep Midnight Void (#070A12) with 3D Glossy Liquid Mercury & Aqua Droplets
-   - Dark Smoked Translucent Glass Slabs (rgba(13, 19, 32, 0.58))
-   - Cyan-Aqua & Iridescent Violet Refractive Rim Borders
-   - 3D Glossy Aqua-Orb SEND Button & Liquid Capsule Dock
+   THEME 2: FROSTED CRYSTAL LIQUID GLASS (MATCHING iDRAFT GLASS REFERENCE)
+   - Sculptural 3D Platinum-Silk Ribbon Backdrop (#D2D3D8)
+   - Floating Translucent Crystal Glass Window Shell with Crisp White Hairline Rim
+   - Pure Matte White Nested Sidebar (#FFFFFF) with Solid Obsidian Active Pill
+   - High-Contrast Tri-Surface Bento Grid: Obsidian (#1B1C20) + Frosted Glass + Pure White
    ============================================================================ */
 [data-theme='liquid-glass'] {
-  --clay-canvas: #070a12;
-  --clay-surface: rgba(13, 20, 34, 0.56);
-  --clay-surface-alt: rgba(18, 27, 45, 0.52);
-  --clay-well: rgba(8, 13, 24, 0.66);
-  --clay-well-deep: rgba(5, 9, 18, 0.78);
-  --clay-border-light: rgba(96, 224, 246, 0.38);
-  --clay-border-dark: rgba(156, 102, 248, 0.25);
+  --clay-canvas: #d2d3d8;
+  --clay-surface: rgba(255, 255, 255, 0.54);
+  --clay-surface-alt: #ffffff;
+  --clay-well: rgba(235, 236, 240, 0.74);
+  --clay-well-deep: rgba(220, 222, 228, 0.86);
+  --clay-border-light: rgba(255, 255, 255, 0.84);
+  --clay-border-dark: rgba(24, 25, 29, 0.08);
 
-  /* Luminous Spatial Alabaster & Silver-Cyan Ink */
-  --ink-primary: #f2f7fc;
-  --ink-secondary: rgba(198, 216, 238, 0.76);
-  --ink-muted: rgba(144, 166, 194, 0.58);
+  /* Crisp Editorial Obsidian & Cool Graphite Ink */
+  --ink-primary: #18191d;
+  --ink-secondary: #535660;
+  --ink-muted: #858994;
   --ink-on-accent: #ffffff;
 
-  /* Liquid Glass Capsule Accents */
-  --clay-terracotta: rgba(24, 152, 182, 0.42);
-  --clay-terracotta-dark: rgba(32, 178, 210, 0.58);
-  --clay-sage: rgba(22, 168, 188, 0.44);
-  --clay-sage-dark: rgba(28, 194, 214, 0.6);
-  --clay-ochre: rgba(38, 146, 218, 0.42);
-  --clay-ochre-dark: rgba(52, 168, 238, 0.58);
-  --clay-cobalt: rgba(34, 134, 218, 0.52);
-  --clay-cobalt-dark: rgba(48, 156, 238, 0.68);
-  --clay-plum: rgba(146, 88, 236, 0.44);
-  --clay-charcoal: rgba(16, 24, 42, 0.76);
+  /* Matte Obsidian & Monochrome Architectural Accents */
+  --clay-terracotta: #1b1c20;
+  --clay-terracotta-dark: #0f1013;
+  --clay-sage: #2d2f36;
+  --clay-sage-dark: #18191d;
+  --clay-ochre: #4d505a;
+  --clay-ochre-dark: #353740;
+  --clay-cobalt: #1b1c20;
+  --clay-cobalt-dark: #0f1013;
+  --clay-plum: #3b3d46;
+  --clay-charcoal: #18191d;
+  --liquid-obsidian: #1b1c20;
+  --liquid-shell-bg: rgba(246, 247, 250, 0.45);
 
-  /* Cyan-Aqua & Iridescent Violet Rim Refraction Shadows */
+  /* Clean Frosted Crystal Elevation Shadows (Zero Neon Glow) */
   --shadow-clay-card:
-    0 24px 54px rgba(0, 0, 0, 0.72),
-    0 0 26px rgba(56, 214, 238, 0.11),
-    inset 0 1.5px 2px rgba(205, 250, 255, 0.48),
-    inset 0 -1.5px 3px rgba(164, 98, 248, 0.28);
+    0 18px 42px rgba(18, 20, 26, 0.075),
+    0 4px 12px rgba(18, 20, 26, 0.035),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
 
   --shadow-clay-sm:
-    0 12px 28px rgba(0, 0, 0, 0.54),
-    0 0 16px rgba(56, 214, 238, 0.08),
-    inset 0 1.5px 2px rgba(195, 248, 255, 0.4),
-    inset 0 -1px 2px rgba(154, 96, 246, 0.22);
+    0 8px 20px rgba(18, 20, 26, 0.055),
+    0 2px 5px rgba(18, 20, 26, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.94);
 
   --shadow-clay-pressed:
-    0 4px 12px rgba(0, 0, 0, 0.5),
-    inset 0 3px 9px rgba(0, 0, 0, 0.68),
-    inset 0 -1px 2px rgba(110, 238, 252, 0.35);
+    0 2px 5px rgba(18, 20, 26, 0.05),
+    inset 0 2px 5px rgba(18, 20, 26, 0.08);
 
   --shadow-clay-well:
-    inset 0 4px 14px rgba(0, 0, 0, 0.72),
-    inset 0 1px 2px rgba(0, 0, 0, 0.55),
-    inset 0 -1px 2px rgba(110, 238, 252, 0.24),
-    0 1px 0 rgba(180, 245, 255, 0.18);
+    inset 0 2px 6px rgba(18, 20, 26, 0.055),
+    inset 0 1px 2px rgba(18, 20, 26, 0.04),
+    0 1px 0 rgba(255, 255, 255, 0.85);
 
   --shadow-clay-terracotta:
-    0 0 22px rgba(48, 222, 242, 0.32),
-    0 8px 20px rgba(0, 0, 0, 0.48),
-    inset 0 2px 4px rgba(220, 254, 255, 0.68),
-    inset 0 -3px 6px rgba(12, 108, 138, 0.62);
+    0 10px 22px rgba(18, 20, 26, 0.18),
+    0 2px 6px rgba(18, 20, 26, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
 
   --shadow-clay-sage:
-    0 0 20px rgba(42, 224, 238, 0.3),
-    0 6px 16px rgba(0, 0, 0, 0.45),
-    inset 0 2px 4px rgba(215, 254, 255, 0.65),
-    inset 0 -2px 5px rgba(10, 114, 136, 0.58);
+    0 10px 22px rgba(18, 20, 26, 0.16),
+    0 2px 6px rgba(18, 20, 26, 0.09),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
 
   --shadow-clay-cobalt:
-    0 0 20px rgba(58, 168, 248, 0.34),
-    0 6px 16px rgba(0, 0, 0, 0.45),
-    inset 0 2px 4px rgba(215, 244, 255, 0.68),
-    inset 0 -2px 5px rgba(16, 78, 148, 0.6);
+    0 10px 22px rgba(18, 20, 26, 0.18),
+    0 2px 6px rgba(18, 20, 26, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
 
   --shadow-clay-ochre:
-    0 0 18px rgba(72, 196, 246, 0.28),
-    inset 0 2px 3px rgba(215, 248, 255, 0.55),
-    inset 0 -2px 4px rgba(16, 92, 146, 0.55);
+    0 8px 18px rgba(18, 20, 26, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
 
   --shadow-clay-charcoal:
-    0 10px 24px rgba(0, 0, 0, 0.58),
-    inset 0 1.5px 2.5px rgba(190, 245, 255, 0.38),
-    inset 0 -2px 4px rgba(146, 92, 242, 0.28);
+    0 10px 24px rgba(18, 20, 26, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
 
-  --glass-blur: blur(26px) saturate(180%);
-  --vector-canvas-bg: rgba(8, 13, 24, 0.72);
-  --vector-grid-stroke: rgba(88, 218, 242, 0.16);
+  --glass-blur: blur(26px) saturate(140%);
+  --vector-canvas-bg: rgba(255, 255, 255, 0.72);
+  --vector-grid-stroke: rgba(24, 25, 29, 0.08);
 }
 
 /* ============================================================================
@@ -504,11 +497,11 @@ code, pre, .font-mono {
 }
 
 [data-theme='liquid-glass'] .clay-select option {
-  background-color: #0b111e;
-  color: #f2f7fc;
+  background-color: #ffffff;
+  color: #18191d;
 }
 
-/* Tactile Buttons (Clay or Liquid Glass Capsules) */
+/* Tactile Buttons (Clay or Frosted Crystal Capsules) */
 .clay-btn {
   display: inline-flex;
   align-items: center;
@@ -532,11 +525,24 @@ code, pre, .font-mono {
 
 [data-theme='liquid-glass'] .clay-btn {
   border-radius: 999px;
+  background-color: #ffffff;
+  color: var(--ink-primary);
+  border: 1px solid rgba(24, 25, 29, 0.12);
+  box-shadow:
+    0 6px 16px rgba(18, 20, 26, 0.055),
+    0 1px 3px rgba(18, 20, 26, 0.04);
 }
 
 .clay-btn:hover:not(:disabled) {
   background-color: var(--clay-surface-alt);
   border-color: rgba(135, 242, 255, 0.72);
+}
+
+[data-theme='liquid-glass'] .clay-btn:hover:not(:disabled) {
+  background-color: #f6f7fa;
+  border-color: rgba(24, 25, 29, 0.24);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(18, 20, 26, 0.09);
 }
 
 .clay-btn:active:not(:disabled),
@@ -553,46 +559,70 @@ code, pre, .font-mono {
 .clay-btn-terracotta {
   background-color: var(--clay-terracotta);
   color: var(--ink-on-accent);
-  border: 1.5px solid rgba(130, 245, 255, 0.72);
+  border: 1.5px solid rgba(255, 228, 215, 0.45);
   box-shadow: var(--shadow-clay-terracotta);
 }
 
-[data-theme='clay'] .clay-btn-terracotta {
-  border-color: rgba(255, 228, 215, 0.45);
+/* Matte Obsidian Hero CTA Pills (Matching iDraft "+ Create" Pill Button) */
+[data-theme='liquid-glass'] .clay-btn-terracotta,
+[data-theme='liquid-glass'] .clay-btn-terracotta:hover:not(:disabled) {
+  background-color: var(--clay-terracotta);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: var(--shadow-clay-terracotta);
 }
 
-/* Iridescent Cyan-Violet Rim Capsule (like SWITCH TO TACTILE CLAY & NEXT: STEP 02 in mockup) */
-[data-theme='liquid-glass'] .page-header-banner .clay-btn-terracotta,
-[data-theme='liquid-glass'] .page-header-banner .clay-btn-cobalt {
-  background-color: rgba(20, 28, 48, 0.72);
-  border: 1.5px solid rgba(186, 114, 252, 0.72);
-  box-shadow:
-    0 0 20px rgba(164, 92, 246, 0.28),
-    inset 1.5px 1.5px 3px rgba(120, 244, 255, 0.62),
-    inset -1.5px -1.5px 4px rgba(218, 96, 250, 0.52);
+[data-theme='liquid-glass'] .clay-btn-sage,
+[data-theme='liquid-glass'] .clay-btn-sage:hover:not(:disabled) {
+  background-color: var(--clay-sage);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: var(--shadow-clay-sage);
 }
 
-/* 3D Glossy Aqua-Turquoise Liquid Sphere Orb Button (like SEND button in mockup) */
+[data-theme='liquid-glass'] .clay-btn-cobalt,
+[data-theme='liquid-glass'] .clay-btn-cobalt:hover:not(:disabled) {
+  background-color: var(--clay-cobalt);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: var(--shadow-clay-cobalt);
+}
+
+[data-theme='liquid-glass'] .clay-btn-ochre,
+[data-theme='liquid-glass'] .clay-btn-ochre:hover:not(:disabled) {
+  background-color: var(--clay-ochre);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: var(--shadow-clay-ochre);
+}
+
+[data-theme='liquid-glass'] .clay-btn-charcoal,
+[data-theme='liquid-glass'] .clay-btn-charcoal:hover:not(:disabled) {
+  background-color: var(--clay-charcoal);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: var(--shadow-clay-charcoal);
+}
+
+/* Crisp Obsidian Pill SEND Button inside Floating White Composer Bar */
 [data-theme='liquid-glass'] .liquid-orb-send-btn {
-  background-color: rgba(28, 198, 218, 0.68);
-  border: 2px solid rgba(190, 254, 255, 0.88);
+  background-color: var(--liquid-obsidian, #1b1c20);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;
   box-shadow:
-    0 0 28px rgba(42, 226, 242, 0.55),
-    0 8px 20px rgba(0, 0, 0, 0.6),
-    inset 4px 5px 10px rgba(235, 255, 255, 0.92),
-    inset -5px -6px 12px rgba(8, 76, 98, 0.85);
+    0 10px 24px rgba(18, 20, 26, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
-/* 3D Liquid Glass Capsule Tube Dock (Bottom Composer in mockup) */
+/* Pure White Floating Frosted Command Dock */
 [data-theme='liquid-glass'] .liquid-capsule-dock {
-  border-radius: 44px;
-  border: 2px solid rgba(120, 236, 252, 0.55);
+  background-color: rgba(255, 255, 255, 0.94);
+  border-radius: 30px;
+  border: 1.5px solid rgba(255, 255, 255, 0.96);
   box-shadow:
-    0 22px 48px rgba(0, 0, 0, 0.75),
-    0 0 28px rgba(48, 214, 238, 0.16),
-    inset 6px 4px 12px rgba(210, 250, 255, 0.52),
-    inset -6px -4px 12px rgba(34, 156, 192, 0.35);
+    0 18px 40px rgba(18, 20, 26, 0.1),
+    0 4px 12px rgba(18, 20, 26, 0.04);
 }
 
 .clay-btn-sage {
@@ -1034,4 +1064,286 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
 
 [data-theme='vision-ceramic'] ::-webkit-scrollbar-thumb {
   background: rgba(18, 21, 20, 0.2);
+}
+
+/* ============================================================================
+   FROSTED CRYSTAL LIQUID GLASS (iDRAFT ARCHITECTURAL OS FRAME & BENTO SYSTEM)
+   ============================================================================ */
+
+/* Outer Floating Frosted Crystal Glass OS Window over 3D Silk Ribbons */
+[data-theme='liquid-glass'] .app-multi-page-shell {
+  background-color: var(--liquid-shell-bg, rgba(246, 247, 250, 0.45));
+  backdrop-filter: blur(28px) saturate(145%);
+  -webkit-backdrop-filter: blur(28px) saturate(145%);
+  border-radius: 36px;
+  border: 1.5px solid rgba(255, 255, 255, 0.82);
+  box-shadow:
+    0 34px 74px rgba(18, 20, 26, 0.16),
+    0 8px 24px rgba(18, 20, 26, 0.06),
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.94),
+    0 0 0 1px rgba(255, 255, 255, 0.35);
+  margin: 22px auto;
+  min-height: calc(100vh - 44px);
+  padding: 22px 26px;
+}
+
+@media (max-width: 1200px) {
+  [data-theme='liquid-glass'] .app-multi-page-shell {
+    margin: 12px;
+    border-radius: 26px;
+    padding: 16px;
+  }
+}
+
+/* Pure Matte White Nested Vertical Sidebar (Matching iDraft Left Rail) */
+[data-theme='liquid-glass'] .clay-sidebar {
+  background-color: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 14px 36px rgba(18, 20, 26, 0.065),
+    0 2px 6px rgba(18, 20, 26, 0.03);
+  min-height: calc(100vh - 88px);
+}
+
+[data-theme='liquid-glass'] .sidebar-nav-item {
+  border-radius: 999px;
+  color: var(--ink-secondary);
+}
+
+[data-theme='liquid-glass'] .sidebar-nav-item:hover {
+  background-color: #f3f4f7;
+  color: var(--ink-primary);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+[data-theme='liquid-glass'] .sidebar-nav-item.active {
+  background-color: var(--liquid-obsidian, #1b1c20);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 22px rgba(18, 20, 26, 0.2);
+}
+
+[data-theme='liquid-glass'] .sidebar-step-badge {
+  background-color: #f2f3f6;
+  color: var(--ink-secondary);
+  border: 1px solid rgba(24, 25, 29, 0.08);
+}
+
+[data-theme='liquid-glass'] .sidebar-nav-item.active .sidebar-step-badge {
+  background-color: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+/* Crisp Obsidian Bottom Account & Telemetry Plaque inside White Sidebar */
+[data-theme='liquid-glass'] .clay-sidebar .clay-well {
+  background-color: var(--liquid-obsidian, #1b1c20);
+  color: #ffffff;
+  --ink-primary: #ffffff;
+  --ink-secondary: rgba(232, 234, 240, 0.8);
+  --ink-muted: rgba(184, 188, 198, 0.68);
+  --clay-border-light: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  box-shadow: 0 12px 26px rgba(18, 20, 26, 0.18);
+}
+
+[data-theme='liquid-glass'] .clay-sidebar .clay-well .clay-btn {
+  background-color: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: none;
+}
+
+/* Airy Translucent Top Header Banner inside the Crystal Frame */
+[data-theme='liquid-glass'] .page-header-banner {
+  background-color: rgba(255, 255, 255, 0.36);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-radius: 24px;
+  border: 1.5px solid rgba(255, 255, 255, 0.78);
+  box-shadow:
+    0 10px 28px rgba(18, 20, 26, 0.045),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+/* Primary Frosted Crystal Slabs */
+[data-theme='liquid-glass'] .clay-card {
+  background-color: var(--clay-surface);
+  backdrop-filter: blur(24px) saturate(135%);
+  -webkit-backdrop-filter: blur(24px) saturate(135%);
+  border-radius: 26px;
+  border: 1.5px solid rgba(255, 255, 255, 0.84);
+  box-shadow: var(--shadow-clay-card);
+}
+
+/* Crisp Pure White Bento Cards (Matching "Month progress", "Month goals", Task Cards) */
+[data-theme='liquid-glass'] .clay-card-alt {
+  background-color: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 22px;
+  border: 1px solid rgba(24, 25, 29, 0.06);
+  box-shadow:
+    0 10px 26px rgba(18, 20, 26, 0.055),
+    0 2px 6px rgba(18, 20, 26, 0.025);
+}
+
+/* ============================================================================
+   SIGNATURE iDRAFT TRI-SURFACE BENTO RHYTHM:
+   1. Obsidian Matte Black Hero Card (#1B1C20)
+   2. Frosted Crystal Translucent Glass Card (Soft Silk Refraction)
+   3. Pure Solid Matte White Card (#FFFFFF)
+   ============================================================================ */
+[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1),
+[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child {
+  background-color: var(--liquid-obsidian, #1b1c20);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  color: #ffffff;
+  --ink-primary: #ffffff;
+  --ink-secondary: rgba(232, 234, 240, 0.8);
+  --ink-muted: rgba(184, 188, 198, 0.68);
+  --clay-border-light: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 20px 42px rgba(18, 20, 26, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1) .clay-tag,
+[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child .clay-tag {
+  background-color: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: none;
+}
+
+[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1) .clay-well,
+[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child .clay-well {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1) .clay-btn,
+[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child .clay-btn {
+  background-color: #ffffff;
+  color: #18191d;
+  border-color: transparent;
+}
+
+/* Crisp White Floating Inputs & Selects (Always High-Contrast Dark Ink on White) */
+[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1) .clay-input,
+[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 1) .clay-select,
+[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child .clay-input,
+[data-theme='liquid-glass'] .page-stage .grid-2 > .clay-card-alt:first-child .clay-select {
+  background-color: #ffffff;
+  color: #18191d;
+  --ink-primary: #18191d;
+  --ink-muted: #767a85;
+}
+
+/* Middle Card in 3-Col Grids: Translucent Frosted Crystal (like "Weekly progress") */
+[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 2) {
+  background-color: rgba(255, 255, 255, 0.34);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1.5px solid rgba(255, 255, 255, 0.78);
+}
+
+/* Third Card in 3-Col Grids: Pure Crisp Matte White (like "Month progress") */
+[data-theme='liquid-glass'] .page-stage .grid-3 > .clay-card:nth-child(3n + 3) {
+  background-color: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid rgba(255, 255, 255, 0.96);
+}
+
+/* Clean Monochrome Crystal Pill Tags (No Cyan/Neon Rim) */
+[data-theme='liquid-glass'] .clay-tag {
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.85);
+  color: var(--ink-secondary);
+  border: 1px solid rgba(24, 25, 29, 0.1);
+  box-shadow: 0 3px 10px rgba(18, 20, 26, 0.04);
+}
+
+[data-theme='liquid-glass'] .clay-tag-terracotta,
+[data-theme='liquid-glass'] .clay-tag-cobalt,
+[data-theme='liquid-glass'] .clay-tag-charcoal {
+  background-color: var(--liquid-obsidian, #1b1c20);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 14px rgba(18, 20, 26, 0.16);
+}
+
+[data-theme='liquid-glass'] .clay-tag-sage {
+  background-color: var(--clay-sage);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 6px 14px rgba(18, 20, 26, 0.14);
+}
+
+[data-theme='liquid-glass'] .clay-tag-ochre {
+  background-color: var(--clay-ochre);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 6px 14px rgba(18, 20, 26, 0.12);
+}
+
+/* Crisp White Floating Inputs & Selects */
+[data-theme='liquid-glass'] .clay-input,
+[data-theme='liquid-glass'] .clay-select {
+  background-color: #ffffff;
+  color: var(--ink-primary);
+  border: 1px solid rgba(24, 25, 29, 0.11);
+  border-radius: 18px;
+  box-shadow:
+    0 5px 14px rgba(18, 20, 26, 0.045),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+[data-theme='liquid-glass'] .clay-input:focus,
+[data-theme='liquid-glass'] .clay-select:focus {
+  border-color: var(--liquid-obsidian, #1b1c20);
+  box-shadow: 0 0 0 3px rgba(27, 28, 32, 0.1);
+}
+
+[data-theme='liquid-glass'] .clay-well {
+  background-color: var(--clay-well);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 20px;
+}
+
+/* Crisp Monochrome Capsule Switches & Sliders */
+[data-theme='liquid-glass'] .clay-switch {
+  border-radius: 999px;
+}
+
+[data-theme='liquid-glass'] .clay-switch.on {
+  background-color: var(--liquid-obsidian, #1b1c20);
+}
+
+[data-theme='liquid-glass'] .clay-switch-knob {
+  border-radius: 999px;
+  box-shadow: 0 2px 5px rgba(18, 20, 26, 0.22);
+}
+
+[data-theme='liquid-glass'] input[type='range'].clay-slider {
+  height: 10px;
+  border-radius: 999px;
+}
+
+[data-theme='liquid-glass'] input[type='range'].clay-slider::-webkit-slider-thumb {
+  border: 3px solid #ffffff;
+  background-color: var(--liquid-obsidian, #1b1c20);
+  box-shadow: 0 4px 12px rgba(18, 20, 26, 0.28);
+}
+
+[data-theme='liquid-glass'] ::-webkit-scrollbar-thumb {
+  background: rgba(24, 25, 29, 0.22);
 }

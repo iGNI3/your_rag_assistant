@@ -1386,7 +1386,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   className="font-display"
                   style={{ fontSize: '0.94rem', fontWeight: 700, marginBottom: 10 }}
                 >
-                  Liquid Glass 3D Droplet Orbital Speed
+                  Liquid Glass 3D Silk Ribbon Motion Speed
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <button

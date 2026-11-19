@@ -10,8 +10,9 @@ interface SpatialLiquidBackgroundProps {
 }
 
 /**
- * Renders 3D Glossy Liquid Glass Droplets & Organic Mercury Amoeba Blobs
- * dynamically tinted by the active Color Palette's optical shader stops.
+ * Architectural 3D Satin-Silk Ribbon & Luminous Frosted Crystal Stage
+ * for the refactored "LIQUID GLASS" theme (matching the iDraft frosted crystal studio aesthetic).
+ * Renders sweeping sculpted 3D monochrome/palette-harmonized silk folds behind the floating crystal OS pane.
  */
 export const SpatialLiquidBackground: React.FC<
   SpatialLiquidBackgroundProps
@@ -21,18 +22,16 @@ export const SpatialLiquidBackground: React.FC<
 
   useEffect(() => {
     if (!active || !containerRef.current) return;
-    const speedMult = flowIntensity === 'dynamic' ? 1 : 1.85;
+    const speedMult = flowIntensity === 'dynamic' ? 1 : 1.9;
 
-    const blobs = containerRef.current.querySelectorAll('.liquid-3d-droplet');
+    const ribbons = containerRef.current.querySelectorAll('.silk-ribbon-band');
     const ctx = gsap.context(() => {
-      blobs.forEach((blob, idx) => {
-        gsap.to(blob, {
-          y: idx % 2 === 0 ? -18 : 16,
-          x: idx % 3 === 0 ? 14 : -12,
-          rotation: idx % 2 === 0 ? 6 : -5,
-          scaleX: idx % 2 === 0 ? 1.04 : 0.96,
-          scaleY: idx % 2 === 0 ? 0.96 : 1.04,
-          duration: (5.5 + idx * 1.1) * speedMult,
+      ribbons.forEach((band, idx) => {
+        gsap.to(band, {
+          y: idx % 2 === 0 ? -16 : 14,
+          x: idx % 2 === 0 ? 12 : -14,
+          rotation: idx % 2 === 0 ? 1.4 : -1.2,
+          duration: (8.5 + idx * 1.8) * speedMult,
           repeat: -1,
           yoyo: true,
           ease: 'sine.inOut',
@@ -40,10 +39,11 @@ export const SpatialLiquidBackground: React.FC<
       });
     }, containerRef);
 
-    const morphAnim = anime({
-      targets: containerRef.current.querySelectorAll('.anime-morph-blob'),
-      scale: [0.97, 1.04],
-      duration: 4600 * speedMult,
+    const breatheAnim = anime({
+      targets: containerRef.current.querySelectorAll('.silk-light-bloom'),
+      opacity: [0.55, 0.9],
+      scale: [0.97, 1.03],
+      duration: 6200 * speedMult,
       direction: 'alternate',
       loop: true,
       easing: 'easeInOutSine',
@@ -51,7 +51,7 @@ export const SpatialLiquidBackground: React.FC<
 
     return () => {
       ctx.revert();
-      morphAnim.pause();
+      breatheAnim.pause();
     };
   }, [active, flowIntensity, palette.id]);
 
@@ -70,16 +70,31 @@ export const SpatialLiquidBackground: React.FC<
         transition: 'background-color 0.45s ease',
       }}
     >
-      {/* Palette-Driven Ambient Deep-Space Caustic Glows */}
+      {/* Soft Studio Directional Light Blooms (Architectural Paper / Silk Lighting) */}
       <div
+        className="silk-light-bloom"
         style={{
           position: 'absolute',
-          top: '-10%',
-          left: '12%',
-          width: 620,
+          top: '-14%',
+          left: '28%',
+          width: 780,
           height: 620,
           borderRadius: '50%',
           backgroundColor: d.glowA,
+          filter: 'blur(110px)',
+          transition: 'background-color 0.45s ease',
+        }}
+      />
+      <div
+        className="silk-light-bloom"
+        style={{
+          position: 'absolute',
+          bottom: '-18%',
+          right: '6%',
+          width: 740,
+          height: 580,
+          borderRadius: '50%',
+          backgroundColor: d.glowB,
           filter: 'blur(120px)',
           transition: 'background-color 0.45s ease',
         }}
@@ -87,31 +102,18 @@ export const SpatialLiquidBackground: React.FC<
       <div
         style={{
           position: 'absolute',
-          top: '18%',
-          right: '8%',
+          top: '35%',
+          left: '-10%',
           width: 560,
           height: 560,
           borderRadius: '50%',
-          backgroundColor: d.glowB,
-          filter: 'blur(125px)',
-          transition: 'background-color 0.45s ease',
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          bottom: '-12%',
-          left: '35%',
-          width: 680,
-          height: 480,
-          borderRadius: '50%',
           backgroundColor: d.glowC,
-          filter: 'blur(130px)',
+          filter: 'blur(115px)',
           transition: 'background-color 0.45s ease',
         }}
       />
 
-      {/* Full-Viewport SVG Stage for 3D Glossy Liquid Glass Droplets & Amoeba Blobs */}
+      {/* Full-Viewport SVG Stage: Sweeping 3D Sculpted Satin-Silk Architectural Ribbons */}
       <svg
         viewBox="0 0 1680 980"
         preserveAspectRatio="xMidYMid slice"
@@ -123,221 +125,95 @@ export const SpatialLiquidBackground: React.FC<
         }}
       >
         <defs>
-          <radialGradient id="droplet-iridescent" cx="32%" cy="28%" r="72%">
+          {/* Main Sweeping Satin Ribbon Gradient (Pearl -> Brushed Silver -> Soft Graphite Fold) */}
+          <linearGradient id="silk-ribbon-primary" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor={d.iridescentStops[0]} />
-            <stop offset="20%" stopColor={d.iridescentStops[1]} />
-            <stop offset="52%" stopColor={d.iridescentStops[2]} />
+            <stop offset="28%" stopColor={d.iridescentStops[1]} />
+            <stop offset="56%" stopColor={d.iridescentStops[2]} />
             <stop offset="82%" stopColor={d.iridescentStops[3]} />
             <stop offset="100%" stopColor={d.iridescentStops[4]} />
-          </radialGradient>
+          </linearGradient>
 
-          <radialGradient id="droplet-aqua" cx="28%" cy="24%" r="74%">
+          {/* Secondary Luminous Fold Gradient */}
+          <linearGradient id="silk-ribbon-light" x1="15%" y1="0%" x2="85%" y2="100%">
             <stop offset="0%" stopColor={d.aquaStops[0]} />
-            <stop offset="24%" stopColor={d.aquaStops[1]} />
-            <stop offset="62%" stopColor={d.aquaStops[2]} />
+            <stop offset="35%" stopColor={d.aquaStops[1]} />
+            <stop offset="70%" stopColor={d.aquaStops[2]} />
             <stop offset="100%" stopColor={d.aquaStops[3]} />
-          </radialGradient>
+          </linearGradient>
 
-          <linearGradient id="mercury-bridge" x1="0%" y1="0%" x2="100%" y2="100%">
+          {/* Deep Architectural Shadow Fold Gradient */}
+          <linearGradient id="silk-ribbon-shadow" x1="0%" y1="100%" x2="100%" y2="0%">
             <stop offset="0%" stopColor={d.bridgeStops[0]} />
-            <stop offset="36%" stopColor={d.bridgeStops[1]} />
+            <stop offset="38%" stopColor={d.bridgeStops[1]} />
             <stop offset="72%" stopColor={d.bridgeStops[2]} />
             <stop offset="100%" stopColor={d.bridgeStops[3]} />
           </linearGradient>
 
-          <filter id="droplet-glow" x="-30%" y="-30%" width="160%" height="160%">
+          {/* Soft Diffused Studio Cast Shadow for 3D Ribbon Elevation */}
+          <filter id="silk-fold-shadow" x="-20%" y="-20%" width="140%" height="140%">
             <feDropShadow
-              dx="0"
-              dy="14"
-              stdDeviation="16"
-              floodColor="rgba(0, 0, 0, 0.65)"
-            />
-            <feDropShadow
-              dx="0"
-              dy="0"
-              stdDeviation="12"
+              dx="10"
+              dy="26"
+              stdDeviation="24"
               floodColor={d.glowColor}
             />
           </filter>
         </defs>
 
-        {/* A. Top-Right 3D Sphere behind Header Banner */}
-        <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
-          <circle
-            cx="1210"
-            cy="38"
-            r="68"
-            fill="url(#droplet-aqua)"
-            stroke={d.rimStroke}
-            strokeWidth="1.5"
-          />
-          <ellipse
-            cx="1188"
-            cy="16"
-            rx="24"
-            ry="11"
-            transform="rotate(-24 1188 16)"
-            fill="rgba(255, 255, 255, 0.78)"
-          />
-        </g>
-
-        {/* B. Main Iridescent Liquid Amoeba Blob */}
+        {/* Band 1: Broad Diagonal Sweeping Satin Ribbon (Top-Center to Bottom-Left, matching iDraft upper fold) */}
         <g
-          className="liquid-3d-droplet anime-morph-blob"
-          filter="url(#droplet-glow)"
-          style={{ transformOrigin: '1360px 260px' }}
+          className="silk-ribbon-band"
+          filter="url(#silk-fold-shadow)"
+          style={{ transformOrigin: '620px 380px' }}
         >
           <path
-            d="M1355,148 C1398,142 1432,178 1422,226 C1412,268 1438,312 1404,352 C1368,392 1284,386 1266,342 C1248,298 1296,268 1316,224 C1334,182 1318,154 1355,148 Z"
-            fill="url(#droplet-iridescent)"
-            stroke={d.rimStroke}
-            strokeWidth="2"
-          />
-          <path
-            d="M1344,166 C1372,162 1396,184 1390,214"
-            fill="none"
-            stroke="rgba(255, 255, 255, 0.88)"
-            strokeWidth="5"
-            strokeLinecap="round"
-          />
-          <path
-            d="M1284,324 C1292,352 1336,368 1374,354"
-            fill="none"
-            stroke={d.rimStroke}
-            strokeWidth="3.5"
-            strokeLinecap="round"
-          />
-        </g>
-
-        {/* C. Horizontal Stretched Liquid Mercury Droplet */}
-        <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
-          <path
-            d="M956,254 C984,248 1032,262 1084,252 C1126,242 1158,224 1178,242 C1196,258 1184,292 1152,296 C1116,300 1076,278 1026,282 C984,286 944,294 936,276 C928,262 938,258 956,254 Z"
-            fill="url(#mercury-bridge)"
-            stroke={d.rimStroke}
-            strokeWidth="1.8"
-          />
-          <path
-            d="M954,264 C995,258 1055,266 1138,246"
-            fill="none"
-            stroke="rgba(255, 255, 255, 0.85)"
-            strokeWidth="3.2"
-            strokeLinecap="round"
-          />
-        </g>
-
-        {/* D. Left Sidebar Edge Clinging Liquid Droplets */}
-        <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
-          <circle
-            cx="94"
-            cy="258"
-            r="26"
-            fill="url(#droplet-aqua)"
-            stroke={d.rimStroke}
-            strokeWidth="1.8"
-          />
-          <ellipse
-            cx="86"
-            cy="248"
-            rx="9"
-            ry="5"
-            transform="rotate(-28 86 248)"
-            fill="rgba(255, 255, 255, 0.9)"
-          />
-          <circle
-            cx="72"
-            cy="292"
-            r="10"
-            fill="url(#droplet-aqua)"
+            d="M 330,-90 C 440,140 620,255 680,465 C 745,695 450,860 120,1040 L -90,940 C 190,770 430,635 385,445 C 345,270 170,130 75,-90 Z"
+            fill="url(#silk-ribbon-primary)"
             stroke={d.rimStroke}
             strokeWidth="1.2"
           />
         </g>
 
-        {/* E. Bottom-Left Organic Liquid Blob & Telemetry Bubbles */}
-        <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
+        {/* Band 2: Luminous Pearl Ribbon Arch (Top-Center Sweeping Right & Downward) */}
+        <g
+          className="silk-ribbon-band"
+          filter="url(#silk-fold-shadow)"
+          style={{ transformOrigin: '1080px 340px' }}
+        >
           <path
-            d="M116,690 C148,684 176,724 166,772 C156,818 184,864 152,902 C122,936 74,918 68,874 C62,832 94,798 96,752 C98,716 92,694 116,690 Z"
-            fill="url(#droplet-iridescent)"
-            stroke={d.rimStroke}
-            strokeWidth="1.8"
-          />
-          <path
-            d="M112,708 C134,706 150,732 146,766"
-            fill="none"
-            stroke="rgba(255, 255, 255, 0.82)"
-            strokeWidth="4"
-            strokeLinecap="round"
-          />
-          <circle
-            cx="332"
-            cy="842"
-            r="22"
-            fill="url(#mercury-bridge)"
-            stroke={d.rimStroke}
-            strokeWidth="1.5"
-          />
-          <ellipse
-            cx="325"
-            cy="834"
-            rx="8"
-            ry="4"
-            transform="rotate(-25 325 834)"
-            fill="rgba(255, 255, 255, 0.88)"
-          />
-          <circle
-            cx="316"
-            cy="888"
-            r="17"
-            fill="url(#mercury-bridge)"
+            d="M 790,-110 C 920,120 1130,210 1320,380 C 1510,550 1630,720 1760,840 L 1640,1060 C 1450,880 1280,695 1095,525 C 915,360 720,220 580,-110 Z"
+            fill="url(#silk-ribbon-light)"
             stroke={d.rimStroke}
             strokeWidth="1.4"
           />
-          <ellipse
-            cx="310"
-            cy="882"
-            rx="6"
-            ry="3"
-            transform="rotate(-25 310 882)"
-            fill="rgba(255, 255, 255, 0.85)"
+        </g>
+
+        {/* Band 3: Soft Sculptural Cross-Fold Arc (Right-Mid to Bottom-Center) */}
+        <g
+          className="silk-ribbon-band"
+          filter="url(#silk-fold-shadow)"
+          style={{ transformOrigin: '1120px 760px' }}
+        >
+          <path
+            d="M 1760,260 C 1520,385 1385,595 1255,780 C 1150,930 1010,1010 820,1080 L 620,990 C 840,910 995,820 1110,665 C 1245,480 1420,255 1730,110 Z"
+            fill="url(#silk-ribbon-shadow)"
+            stroke={d.rimStroke}
+            strokeWidth="1.1"
           />
         </g>
 
-        {/* F. Right Middle Droplet */}
-        <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
+        {/* Band 4: Delicate Upper-Left Ambient Silk Highlight Loop */}
+        <g
+          className="silk-ribbon-band"
+          style={{ transformOrigin: '240px 210px' }}
+        >
           <path
-            d="M1566,464 C1596,460 1618,492 1612,526 C1606,558 1574,578 1548,562 C1524,546 1528,512 1542,486 C1550,472 1554,466 1566,464 Z"
-            fill="url(#droplet-iridescent)"
+            d="M -120,160 C 80,115 265,175 415,310 C 520,405 565,530 515,670 L 340,625 C 380,520 355,430 275,355 C 165,250 15,215 -140,265 Z"
+            fill="url(#silk-ribbon-light)"
+            opacity="0.72"
             stroke={d.rimStroke}
-            strokeWidth="1.8"
-          />
-          <path
-            d="M1562,478 C1584,476 1598,496 1594,520"
-            fill="none"
-            stroke="rgba(255, 255, 255, 0.9)"
-            strokeWidth="4"
-            strokeLinecap="round"
-          />
-        </g>
-
-        {/* G. Lower-Right Sub-Surface Sphere */}
-        <g className="liquid-3d-droplet" filter="url(#droplet-glow)">
-          <circle
-            cx="1325"
-            cy="795"
-            r="52"
-            fill="url(#droplet-iridescent)"
-            stroke={d.rimStroke}
-            strokeWidth="1.5"
-            opacity="0.82"
-          />
-          <ellipse
-            cx="1308"
-            cy="776"
-            rx="18"
-            ry="8"
-            transform="rotate(-25 1308 776)"
-            fill="rgba(255, 255, 255, 0.72)"
+            strokeWidth="1"
           />
         </g>
       </svg>

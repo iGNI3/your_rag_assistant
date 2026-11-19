@@ -669,7 +669,7 @@ export const App: React.FC = () => {
                   {themeMode === 'clay'
                     ? 'TACTILE CLAY EDITION'
                     : themeMode === 'liquid-glass'
-                    ? 'SPATIAL LIQUID GLASS'
+                    ? 'FROSTED CRYSTAL GLASS'
                     : 'VISION CERAMIC STUDIO'}
                 </div>
               </div>
