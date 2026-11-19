@@ -27,10 +27,9 @@ export type AppPageId =
   | 'chunking'
   | 'vectordb'
   | 'workbench'
-  | 'models'
-  | 'offline-portal'
   | 'metrics'
-  | 'database';
+  | 'database'
+  | 'settings';
 
 interface OverviewPageProps {
   latestQuery: AgenticRagResponse | null;
@@ -101,10 +100,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       icon: Terminal,
     },
     {
-      page: 'models',
-      step: 'PAGE 06 & 07',
-      title: 'Small LLM Router & Offline Model Portal',
-      desc: 'Switch between Built-in Local Agent, Offline GGUF files, Ollama, LM Studio, or Cloud APIs (OpenAI, Gemini, Anthropic, Groq) on demand.',
+      page: 'settings',
+      step: 'SETTINGS',
+      title: 'Settings: Account, Models, API Keys & Offline Portal',
+      desc: 'Manage your user account & password, switch Small LLM & Generator models, store private API keys, and scan/download offline GGUF models.',
       badge: `${config.reshaperProvider.toUpperCase()}`,
       tagClass: 'clay-tag-terracotta',
       icon: Cpu,
@@ -132,7 +131,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
           if (tab === 'query') onNavigate('workbench');
           else if (tab === 'ingest') onNavigate('ingest');
           else if (tab === 'vectordb') onNavigate('vectordb');
-          else if (tab === 'models') onNavigate('models');
+          else if (tab === 'models') onNavigate('settings');
           else if (tab === 'metrics') onNavigate('metrics');
         }}
       />

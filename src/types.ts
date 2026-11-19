@@ -264,6 +264,16 @@ export interface ModelPortalCatalogItem {
   hfCliCommand: string;
 }
 
+export interface UserProfile {
+  userId: string;
+  username: string;
+  displayName: string;
+  email: string;
+  role: string;
+  createdAt: string;
+  lastLoginAt?: string;
+}
+
 export interface VectorDbStats {
   totalDocuments: number;
   totalChunks: number;

@@ -54,7 +54,6 @@ def compute_semantic_embedding(text: str) -> List[float]:
     clean = text.lower()
     words = [w for w in re.split(r"\s+", re.sub(r"[^a-z0-9_\-\s]", " ", clean)) if w]
 
-    # 1. Concept cluster activations (dims 0..15)
     for c_idx, cluster in enumerate(CONCEPT_CLUSTERS):
         hits = 0.0
         for term in cluster:
@@ -63,7 +62,6 @@ def compute_semantic_embedding(text: str) -> List[float]:
         vec[c_idx * 2] += hits * 1.8
         vec[c_idx * 2 + 1] += math.sqrt(hits) * 1.4
 
-    # 2. Stemmed word feature hashing across dims 16..95
     for i, w in enumerate(words):
         stemmed = stem_word(w)
         if len(stemmed) < 2:
@@ -83,7 +81,6 @@ def compute_semantic_embedding(text: str) -> List[float]:
         vec[dim1] += sign1 * pos_weight
         vec[dim2] += sign2 * 0.75 * pos_weight
 
-    # 3. Character 3-gram subword hashes (dims 96..127)
     compact = "_".join(words)[:600]
     for i in range(max(0, len(compact) - 2)):
         trigram = compact[i:i + 3]
@@ -139,39 +136,15 @@ class HybridVectorDatabase:
         self.sql_db = PersistentRAGDatabase(storage_dir)
         self.documents: Dict[str, Dict[str, Any]] = {}
         self.chunks: Dict[str, Dict[str, Any]] = {}
-        self.hnsw_layers: Dict[int, Dict[str, List[str]]] = {0: {}, 1: {}, 2: {}}
-        self.idf_cache: Dict[str, float] = {}
-        self.avg_chunk_len: float = 120.0
         self._load_from_disk()
 
     def _load_from_disk(self):
-        # 1. Load from SQLite3 vault first
         try:
             sql_docs, sql_chunks = self.sql_db.load_all_documents_and_chunks()
-            if sql_docs:
-                for doc in sql_docs:
-                    self.documents[doc["id"]] = doc
-                for ch in sql_chunks:
-                    self.chunks[ch["id"]] = ch
-                self.rebuild_indexes()
-                return
-        except Exception:
-            pass
-
-        # 2. Fallback migration from hybrid_vectordb.json into SQLite3 vault
-        if not os.path.exists(self.storage_file):
-            return
-        try:
-            with open(self.storage_file, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            for doc in raw.get("documents", []):
+            for doc in sql_docs:
                 self.documents[doc["id"]] = doc
-            for ch in raw.get("chunks", []):
+            for ch in sql_chunks:
                 self.chunks[ch["id"]] = ch
-            for doc in self.documents.values():
-                doc_chunks = [c for c in self.chunks.values() if c["documentId"] == doc["id"]]
-                self.sql_db.upsert_document_and_chunks(doc, doc_chunks)
-            self.rebuild_indexes()
         except Exception:
             pass
 
@@ -184,60 +157,39 @@ class HybridVectorDatabase:
             with open(self.storage_file, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
         except Exception as e:
-            print("Failed to persist VectorDB:", e)
+            print("Failed to persist VectorDB snapshot:", e)
 
-    def get_document_count(self) -> int:
-        return len(self.documents)
+    def get_document_count(self, user_id: str) -> int:
+        return sum(1 for d in self.documents.values() if d.get("userId", "usr_demo_admin") == user_id)
 
-    def get_all_documents(self) -> List[Dict[str, Any]]:
-        return sorted(
-            self.documents.values(),
-            key=lambda d: d.get("ingestedAt", ""),
-            reverse=True,
-        )
+    def get_all_documents(self, user_id: str) -> List[Dict[str, Any]]:
+        user_docs = [d for d in self.documents.values() if d.get("userId", "usr_demo_admin") == user_id]
+        return sorted(user_docs, key=lambda d: d.get("ingestedAt", ""), reverse=True)
 
-    def get_all_chunks(self) -> List[Dict[str, Any]]:
-        return list(self.chunks.values())
+    def get_all_chunks(self, user_id: str) -> List[Dict[str, Any]]:
+        return [c for c in self.chunks.values() if c.get("userId", "usr_demo_admin") == user_id]
 
-    def rebuild_indexes(self):
-        all_chunks = list(self.chunks.values())
-        n_chunks = len(all_chunks)
-        self.idf_cache.clear()
-        self.hnsw_layers = {0: {}, 1: {}, 2: {}}
-
+    def _compute_user_idf_and_hnsw(self, user_chunks: List[Dict[str, Any]]) -> Tuple[Dict[str, float], float, int]:
+        n_chunks = len(user_chunks)
         if n_chunks == 0:
-            return
+            return {}, 120.0, 0
 
         doc_freq: Dict[str, int] = {}
         total_terms = 0
-        for ch in all_chunks:
+        for ch in user_chunks:
             sparse = ch.get("sparseTerms", {})
             total_terms += sum(sparse.values())
             for term in sparse.keys():
                 doc_freq[term] = doc_freq.get(term, 0) + 1
 
-        self.avg_chunk_len = max(10.0, total_terms / n_chunks)
-        for term, df in doc_freq.items():
-            self.idf_cache[term] = math.log(1.0 + (n_chunks - df + 0.5) / (df + 0.5))
-
-        for i, node in enumerate(all_chunks):
-            neighbors = sorted(
-                (
-                    (
-                        other["id"],
-                        compute_vector_similarity(node["embedding"], other["embedding"], "cosine"),
-                    )
-                    for other in all_chunks
-                    if other["id"] != node["id"]
-                ),
-                key=lambda x: x[1],
-                reverse=True,
-            )
-            self.hnsw_layers[0][node["id"]] = [nid for nid, _ in neighbors[:6]]
-            if i % 2 == 0:
-                self.hnsw_layers[1][node["id"]] = [nid for nid, _ in neighbors[:3]]
-            if i % 4 == 0:
-                self.hnsw_layers[2][node["id"]] = [nid for nid, _ in neighbors[:2]]
+        avg_len = max(10.0, total_terms / n_chunks)
+        idf_map = {
+            term: math.log(1.0 + (n_chunks - df + 0.5) / (df + 0.5))
+            for term, df in doc_freq.items()
+        }
+        # Layer 0 edges: min(6, n_chunks - 1) per chunk
+        edges = n_chunks * min(6, max(0, n_chunks - 1))
+        return idf_map, avg_len, edges
 
     def ingest_document(
         self,
@@ -247,6 +199,7 @@ class HybridVectorDatabase:
         raw_text: str,
         cleaned_text: str,
         extraction_telemetry: Dict[str, Any],
+        user_id: str = "usr_demo_admin",
         auto_optimize: bool = True,
         preferred_strategy: Optional[str] = None,
         target_chunk_tokens: int = 150,
@@ -255,8 +208,10 @@ class HybridVectorDatabase:
     ) -> Dict[str, Any]:
         final_doc_id = doc_id or f"doc_{int(time.time() * 1000)}_{random.randint(1000, 9999)}"
 
-        # Remove old chunks if re-chunking existing document
-        to_delete = [cid for cid, ch in self.chunks.items() if ch["documentId"] == final_doc_id]
+        to_delete = [
+            cid for cid, ch in self.chunks.items()
+            if ch["documentId"] == final_doc_id and ch.get("userId", "usr_demo_admin") == user_id
+        ]
         for cid in to_delete:
             del self.chunks[cid]
 
@@ -264,24 +219,24 @@ class HybridVectorDatabase:
             cleaned_text, title, target_chunk_tokens, chunk_overlap_tokens
         )
         chosen_strategy = (
-            optimal_strategy
-            if auto_optimize
-            else (preferred_strategy or optimal_strategy)
+            optimal_strategy if auto_optimize else (preferred_strategy or optimal_strategy)
         )
 
         raw_chunks = generate_chunks_by_strategy(
             cleaned_text, title, chosen_strategy, target_chunk_tokens, chunk_overlap_tokens
         )
 
+        doc_chunks: List[Dict[str, Any]] = []
         for idx, rc in enumerate(raw_chunks):
             chunk_id = f"{final_doc_id}_ch_{idx + 1}"
             embedding = compute_semantic_embedding(rc["content"])
             coords_2d = project_vector_to_2d(embedding)
             sparse_terms = tokenize_for_sparse(rc["content"])
-
             parent_idx = rc.get("parentIndex")
+
             chunk_obj = {
                 "id": chunk_id,
+                "userId": user_id,
                 "documentId": final_doc_id,
                 "documentTitle": title,
                 "documentFormat": doc_format,
@@ -301,9 +256,11 @@ class HybridVectorDatabase:
                 "sparseTerms": sparse_terms,
             }
             self.chunks[chunk_id] = chunk_obj
+            doc_chunks.append(chunk_obj)
 
         doc_record = {
             "id": final_doc_id,
+            "userId": user_id,
             "title": title,
             "filename": filename,
             "format": doc_format,
@@ -318,9 +275,7 @@ class HybridVectorDatabase:
         }
 
         self.documents[final_doc_id] = doc_record
-        doc_chunks = [c for c in self.chunks.values() if c["documentId"] == final_doc_id]
-        self.sql_db.upsert_document_and_chunks(doc_record, doc_chunks)
-        self.rebuild_indexes()
+        self.sql_db.upsert_document_and_chunks(doc_record, doc_chunks, user_id=user_id)
         self.save_to_disk()
         return doc_record
 
@@ -328,11 +283,12 @@ class HybridVectorDatabase:
         self,
         doc_id: str,
         new_strategy: str,
+        user_id: str = "usr_demo_admin",
         target_chunk_tokens: int = 150,
         chunk_overlap_tokens: int = 30,
     ) -> Optional[Dict[str, Any]]:
         existing = self.documents.get(doc_id)
-        if not existing:
+        if not existing or existing.get("userId", "usr_demo_admin") != user_id:
             return None
         return self.ingest_document(
             title=existing["title"],
@@ -341,6 +297,7 @@ class HybridVectorDatabase:
             raw_text=existing["rawText"],
             cleaned_text=existing["cleanedText"],
             extraction_telemetry=existing["extractionTelemetry"],
+            user_id=user_id,
             auto_optimize=False,
             preferred_strategy=new_strategy,
             target_chunk_tokens=target_chunk_tokens,
@@ -348,34 +305,45 @@ class HybridVectorDatabase:
             doc_id=existing["id"],
         )
 
-    def delete_document(self, doc_id: str) -> bool:
-        if doc_id not in self.documents:
+    def delete_document(self, doc_id: str, user_id: str = "usr_demo_admin") -> bool:
+        existing = self.documents.get(doc_id)
+        if not existing or existing.get("userId", "usr_demo_admin") != user_id:
             return False
         del self.documents[doc_id]
-        to_del = [cid for cid, ch in self.chunks.items() if ch["documentId"] == doc_id]
+        to_del = [
+            cid for cid, ch in self.chunks.items()
+            if ch["documentId"] == doc_id and ch.get("userId", "usr_demo_admin") == user_id
+        ]
         for cid in to_del:
             del self.chunks[cid]
-        self.sql_db.delete_document(doc_id)
-        self.rebuild_indexes()
+        self.sql_db.delete_document(doc_id, user_id=user_id)
         self.save_to_disk()
         return True
 
-    def get_vectordb_stats(self) -> Dict[str, Any]:
-        all_chunks = list(self.chunks.values())
-        layer0 = self.hnsw_layers.get(0, {})
-        total_edges = sum(len(edges) for edges in layer0.values())
-        fp32_bytes = len(all_chunks) * VECTOR_DIM * 4
-        int8_bytes = len(all_chunks) * VECTOR_DIM * 1
-        binary_bytes = math.ceil((len(all_chunks) * VECTOR_DIM) / 8.0)
+    def purge_user_data_in_memory(self, user_id: str):
+        for did in [k for k, v in self.documents.items() if v.get("userId") == user_id]:
+            del self.documents[did]
+        for cid in [k for k, v in self.chunks.items() if v.get("userId") == user_id]:
+            del self.chunks[cid]
+        self.save_to_disk()
+
+    def get_vectordb_stats(self, user_id: str = "usr_demo_admin") -> Dict[str, Any]:
+        user_docs = self.get_all_documents(user_id)
+        user_chunks = self.get_all_chunks(user_id)
+        idf_map, _, total_edges = self._compute_user_idf_and_hnsw(user_chunks)
+
+        fp32_bytes = len(user_chunks) * VECTOR_DIM * 4
+        int8_bytes = len(user_chunks) * VECTOR_DIM * 1
+        binary_bytes = math.ceil((len(user_chunks) * VECTOR_DIM) / 8.0)
 
         return {
-            "totalDocuments": len(self.documents),
-            "totalChunks": len(all_chunks),
+            "totalDocuments": len(user_docs),
+            "totalChunks": len(user_chunks),
             "vectorDimensions": VECTOR_DIM,
-            "vocabTermsIndexed": len(self.idf_cache),
+            "vocabTermsIndexed": len(idf_map),
             "hnswLayers": 3,
             "hnswTotalEdges": total_edges,
-            "hnswAvgDegree": round(total_edges / len(all_chunks), 1) if all_chunks else 0.0,
+            "hnswAvgDegree": round(total_edges / len(user_chunks), 1) if user_chunks else 0.0,
             "memoryFootprint": {
                 "fp32Kb": round(fp32_bytes / 1024.0, 2),
                 "int8QuantizedKb": round(int8_bytes / 1024.0, 2),
@@ -390,8 +358,10 @@ class HybridVectorDatabase:
         sub_queries: List[str],
         hyde_document: str,
         config: Dict[str, Any],
+        user_id: str = "usr_demo_admin",
     ) -> Dict[str, Any]:
-        all_chunks = list(self.chunks.values())
+        all_chunks = self.get_all_chunks(user_id)
+        idf_cache, avg_chunk_len, _ = self._compute_user_idf_and_hnsw(all_chunks)
         t0 = time.time()
 
         primary_vec = compute_semantic_embedding(reshaped_primary_query)
@@ -406,7 +376,6 @@ class HybridVectorDatabase:
         hyde_coords_2d = project_vector_to_2d(hyde_vec)
         embedding_ms = max(2, int(round((time.time() - t0) * 1000)))
 
-        # 2. Dense HNSW Search
         t_dense = time.time()
         metric = config.get("distanceMetric", "cosine")
         dense_scores: Dict[str, float] = {}
@@ -424,7 +393,6 @@ class HybridVectorDatabase:
             dense_scores[chunk["id"]] = round(score, 4)
         hnsw_dense_ms = max(3, int(round((time.time() - t_dense) * 1000)))
 
-        # 3. Sparse BM25+ Search
         t_sparse = time.time()
         combined_q = reshaped_primary_query + " " + (
             " ".join(sub_queries) if config.get("enableMultiQuery", True) else ""
@@ -445,9 +413,9 @@ class HybridVectorDatabase:
                 tf = sparse_map.get(q_term, 0)
                 if tf > 0:
                     matched.append(q_term)
-                    idf = self.idf_cache.get(q_term, 1.2)
+                    idf = idf_cache.get(q_term, 1.2)
                     num = tf * (k1 + 1.0)
-                    denom = tf + k1 * (1.0 - b + b * (chunk_len / self.avg_chunk_len))
+                    denom = tf + k1 * (1.0 - b + b * (chunk_len / avg_chunk_len))
                     bm25 += idf * (num / denom + 1.0)
 
             sec_lower = chunk["sectionPath"].lower()
@@ -464,7 +432,6 @@ class HybridVectorDatabase:
             sparse_scores[cid] = round(min(1.0, val / max_raw_bm25), 4)
         bm25_sparse_ms = max(2, int(round((time.time() - t_sparse) * 1000)))
 
-        # 4. Reciprocal Rank Fusion (RRF) + MMR Diversity
         t_rrf = time.time()
         dense_ranked = sorted(all_chunks, key=lambda c: dense_scores.get(c["id"], 0.0), reverse=True)
         sparse_ranked = sorted(all_chunks, key=lambda c: sparse_scores.get(c["id"], 0.0), reverse=True)
@@ -523,7 +490,6 @@ class HybridVectorDatabase:
             })
         rrf_mmr_ms = max(2, int(round((time.time() - t_rrf) * 1000)))
 
-        # 5. Cross-Encoder Reranking & CRAG Relevance Grader
         t_rerank = time.time()
         query_keywords = extract_top_keywords(f"{original_prompt} {reshaped_primary_query}", 14)
         crag_threshold = float(config.get("cragThreshold", 0.34))

@@ -8,8 +8,6 @@ import {
   Scissors,
   Compass,
   Terminal,
-  Cpu,
-  HardDrive,
   BarChart2,
   Database,
   Layers,
@@ -18,6 +16,9 @@ import {
   ArrowRight,
   Sun,
   Orbit,
+  Settings,
+  LogOut,
+  User,
 } from 'lucide-react';
 import {
   AgenticRagResponse,
@@ -28,15 +29,21 @@ import {
   ModelPortalCatalogItem,
   RagPipelineConfig,
   SavedFinding,
+  UserProfile,
   VectorDbStats,
 } from './types';
+import {
+  authFetch,
+  getStoredAuthToken,
+  setStoredAuthToken,
+} from './api';
 import { AppPageId, OverviewPage } from './pages/OverviewPage';
+import { AuthPage } from './pages/AuthPage';
 import { ChatHomePage } from './pages/ChatHomePage';
 import { IngestOcrPage } from './pages/IngestOcrPage';
 import { ChunkOptimizerPage } from './pages/ChunkOptimizerPage';
 import { AgenticWorkbenchPage } from './pages/AgenticWorkbenchPage';
-import { ModelRouterPage } from './pages/ModelRouterPage';
-import { OfflinePortalPage } from './pages/OfflinePortalPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { VectorSpaceCanvas } from './components/VectorSpaceCanvas';
 import { MetricsAndEvaluationSuite } from './components/MetricsAndEvaluationSuite';
 import { DatabaseAndFindingsVault } from './components/DatabaseAndFindingsVault';
@@ -108,7 +115,7 @@ const PAGE_ROUTES: PageRouteDef[] = [
   {
     id: 'workbench',
     step: '06',
-    group: 'AGENTIC INFERENCE & MODELS',
+    group: 'AUDIT & INSPECTION',
     title: 'Deep Prompt Reshaper & Reranker Inspector',
     sidebarLabel: 'Prompt & CRAG Inspector',
     subtitle:
@@ -116,29 +123,9 @@ const PAGE_ROUTES: PageRouteDef[] = [
     icon: Terminal,
   },
   {
-    id: 'models',
-    step: '07',
-    group: 'AGENTIC INFERENCE & MODELS',
-    title: 'Switchable Small LLM Router & API Key Vault',
-    sidebarLabel: 'Small LLM & API Keys',
-    subtitle:
-      'Switch between Built-in Local Agent, Offline GGUF, Ollama, LM Studio, or Cloud APIs (OpenAI, Gemini, Anthropic, Groq) on demand.',
-    icon: Cpu,
-  },
-  {
-    id: 'offline-portal',
-    step: '08',
-    group: 'AGENTIC INFERENCE & MODELS',
-    title: 'Offline Model Path Scanner & Download Portal',
-    sidebarLabel: 'Offline GGUF Portal',
-    subtitle:
-      'Verify local .gguf / .onnx model files with magic-byte header validation or download from the curated HuggingFace GGUF portal.',
-    icon: HardDrive,
-  },
-  {
     id: 'metrics',
-    step: '09',
-    group: 'AUDIT & SQLITE VAULT',
+    step: '07',
+    group: 'AUDIT & INSPECTION',
     title: 'Comprehensive RAGAS & Latency Evaluation Suite',
     sidebarLabel: 'Evaluation Metrics',
     subtitle:
@@ -147,19 +134,30 @@ const PAGE_ROUTES: PageRouteDef[] = [
   },
   {
     id: 'database',
-    step: '10',
-    group: 'AUDIT & SQLITE VAULT',
+    step: '08',
+    group: 'AUDIT & INSPECTION',
     title: 'SQLite3 (WAL) Database & Findings Vault',
     sidebarLabel: 'SQLite DB & Findings',
     subtitle:
-      'Inspect the 5 persistent SQLite3 tables, disk file paths, and commit or export research findings as Markdown & JSON.',
+      'Inspect your isolated SQLite3 tables, disk storage paths, and commit or export research findings as Markdown & JSON.',
     icon: Database,
+  },
+  {
+    id: 'settings',
+    step: '09',
+    group: 'SYSTEM & ACCOUNT',
+    title: 'Settings: Account, Models, API Keys & Offline Portal',
+    sidebarLabel: 'Settings & Account',
+    subtitle:
+      'Manage your account & password, switch Small LLM & Generator models, configure private API keys, and scan/download offline GGUF models.',
+    icon: Settings,
   },
 ];
 
 function parseHashToPage(): AppPageId {
   const raw = window.location.hash.replace(/^#\/?/, '').trim();
   if (!raw) return 'chat';
+  if (raw === 'models' || raw === 'offline-portal') return 'settings';
   const found = PAGE_ROUTES.find((r) => r.id === raw);
   return found ? found.id : 'chat';
 }
@@ -170,6 +168,10 @@ export const App: React.FC = () => {
     return saved === 'liquid-glass' || saved === 'clay' ? saved : 'clay';
   });
   const [spatialFlow, setSpatialFlow] = useState<'calm' | 'dynamic'>('dynamic');
+
+  // Multi-user Auth State
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [authChecked, setAuthChecked] = useState<boolean>(false);
 
   const [activePage, setActivePage] = useState<AppPageId>(() =>
     parseHashToPage()
@@ -201,24 +203,14 @@ export const App: React.FC = () => {
     'SQLITE3 WAL + HNSW SYNCED'
   );
 
-  // Apply data-theme attribute and trigger GSAP smooth spatial transition
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode);
     localStorage.setItem('clayrag_theme_mode', themeMode);
 
     gsap.fromTo(
       '.clay-card, .page-header-banner, .clay-sidebar',
-      {
-        y: 6,
-        scale: 0.992,
-      },
-      {
-        y: 0,
-        scale: 1,
-        duration: 0.48,
-        stagger: 0.03,
-        ease: 'power3.out',
-      }
+      { y: 6, scale: 0.992 },
+      { y: 0, scale: 1, duration: 0.45, stagger: 0.03, ease: 'power3.out' }
     );
   }, [themeMode]);
 
@@ -229,23 +221,39 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
-    const onHashChange = () => {
-      setActivePage(parseHashToPage());
-    };
+    const onHashChange = () => setActivePage(parseHashToPage());
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
+  const clearWorkspaceState = () => {
+    setDocuments([]);
+    setChunks([]);
+    setStats(null);
+    setConfig(null);
+    setLatestQuery(null);
+    setQueryHistory([]);
+    setSavedFindings([]);
+    setDatabaseTelemetry(null);
+  };
+
   const fetchFullState = async () => {
     try {
-      const resp = await fetch('/api/state');
+      const resp = await authFetch('/api/state');
+      if (resp.status === 401) {
+        setStoredAuthToken(null);
+        setCurrentUser(null);
+        clearWorkspaceState();
+        return;
+      }
       if (!resp.ok) return;
       const data = await resp.json();
+      if (data.user) setCurrentUser(data.user);
       setDocuments(data.documents || []);
       setChunks(data.chunks || []);
       setStats(data.stats || null);
       setConfig(data.config || null);
-      if (data.latestQuery) setLatestQuery(data.latestQuery);
+      setLatestQuery(data.latestQuery || null);
       setQueryHistory(data.queryHistory || []);
       setSavedFindings(data.savedFindings || []);
       setDatabaseTelemetry(data.databaseTelemetry || null);
@@ -255,9 +263,44 @@ export const App: React.FC = () => {
     }
   };
 
+  // Validate existing session token on initial load
   useEffect(() => {
-    fetchFullState();
+    const checkSession = async () => {
+      const tok = getStoredAuthToken();
+      if (!tok) {
+        setAuthChecked(true);
+        return;
+      }
+      try {
+        const resp = await authFetch('/api/auth/me');
+        if (resp.ok) {
+          const data = await resp.json();
+          setCurrentUser(data.user);
+          await fetchFullState();
+        } else {
+          setStoredAuthToken(null);
+          setCurrentUser(null);
+        }
+      } catch {
+        setCurrentUser(null);
+      } finally {
+        setAuthChecked(true);
+      }
+    };
+    checkSession();
   }, []);
+
+  const handleLogout = async () => {
+    try {
+      await authFetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // ignore
+    }
+    setStoredAuthToken(null);
+    setCurrentUser(null);
+    clearWorkspaceState();
+    navigateToPage('chat');
+  };
 
   const handleExecuteQuery = async (prompt: string) => {
     setIsExecuting(true);
@@ -268,7 +311,7 @@ export const App: React.FC = () => {
     }
 
     try {
-      const resp = await fetch('/api/query', {
+      const resp = await authFetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt }),
@@ -299,7 +342,7 @@ export const App: React.FC = () => {
     claimVerifications?: AgenticRagResponse['claimVerifications'];
     metrics?: Partial<AgenticRagResponse['metrics']>;
   }) => {
-    const resp = await fetch('/api/findings', {
+    const resp = await authFetch('/api/findings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -313,7 +356,7 @@ export const App: React.FC = () => {
   };
 
   const handleDeleteFinding = async (findingId: string) => {
-    const resp = await fetch(`/api/findings/${findingId}`, {
+    const resp = await authFetch(`/api/findings/${findingId}`, {
       method: 'DELETE',
     });
     if (resp.ok) {
@@ -328,14 +371,14 @@ export const App: React.FC = () => {
     if (!config) return;
     const optimistic = { ...config, ...partial };
     setConfig(optimistic);
-    const resp = await fetch('/api/config', {
+    const resp = await authFetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(partial),
     });
     if (resp.ok) {
       await fetchFullState();
-      setStatusMessage('PIPELINE CONFIG PERSISTED TO SQLITE');
+      setStatusMessage('USER SETTINGS PERSISTED TO SQLITE');
     }
   };
 
@@ -360,15 +403,13 @@ export const App: React.FC = () => {
       formData.append('targetChunkTokens', String(options.targetChunkTokens));
       formData.append('chunkOverlapTokens', String(options.chunkOverlapTokens));
 
-      const resp = await fetch('/api/ingest/upload', {
+      const resp = await authFetch('/api/ingest/upload', {
         method: 'POST',
         body: formData,
       });
       if (resp.ok) {
         await fetchFullState();
-        setStatusMessage(
-          `PERSISTED ${files.length} DOC(S) TO SQLITE & ./data/uploads`
-        );
+        setStatusMessage(`PERSISTED ${files.length} DOC(S) TO YOUR VAULT`);
       }
     } finally {
       setIsExecuting(false);
@@ -388,7 +429,7 @@ export const App: React.FC = () => {
     setActiveStageIndex(1);
     setStatusMessage('BENCHMARKING 5 CHUNKING STRATEGIES & COMMITTING TO DB...');
     try {
-      const resp = await fetch('/api/ingest/text', {
+      const resp = await authFetch('/api/ingest/text', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -396,7 +437,7 @@ export const App: React.FC = () => {
       if (resp.ok) {
         await fetchFullState();
         setStatusMessage(
-          `COMMITTED "${payload.title.toUpperCase()}" TO SQLITE & HNSW`
+          `COMMITTED "${payload.title.toUpperCase()}" TO YOUR HNSW INDEX`
         );
       }
     } finally {
@@ -414,7 +455,7 @@ export const App: React.FC = () => {
     setActiveStageIndex(1);
     setStatusMessage(`RE-SLICING CHUNKS WITH ${strategy.toUpperCase()}...`);
     try {
-      const resp = await fetch(`/api/documents/${docId}/rechunk`, {
+      const resp = await authFetch(`/api/documents/${docId}/rechunk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -435,7 +476,7 @@ export const App: React.FC = () => {
   };
 
   const handleDeleteDocument = async (docId: string) => {
-    await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+    await authFetch(`/api/documents/${docId}`, { method: 'DELETE' });
     await fetchFullState();
     setStatusMessage('DOCUMENT REMOVED FROM SQLITE & HNSW REBUILT');
   };
@@ -443,13 +484,59 @@ export const App: React.FC = () => {
   const handleResetCorpus = async () => {
     setIsExecuting(true);
     try {
-      await fetch('/api/corpus/reset', { method: 'POST' });
+      await authFetch('/api/corpus/reset', { method: 'POST' });
       await fetchFullState();
-      setStatusMessage('SEED TECHNICAL CORPUS RESTORED IN SQLITE');
+      setStatusMessage('STARTER TECHNICAL CORPUS RESTORED IN YOUR VAULT');
     } finally {
       setIsExecuting(false);
     }
   };
+
+  // Show Authentication Screen if not signed in
+  if (!authChecked) {
+    return (
+      <>
+        <SpatialLiquidBackground
+          active={themeMode === 'liquid-glass'}
+          flowIntensity={spatialFlow}
+        />
+        <div
+          style={{
+            minHeight: '100vh',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            zIndex: 1,
+          }}
+        >
+          <div className="clay-card font-mono">
+            VERIFYING USER SESSION...
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <>
+        <SpatialLiquidBackground
+          active={themeMode === 'liquid-glass'}
+          flowIntensity={spatialFlow}
+        />
+        <AuthPage
+          themeMode={themeMode}
+          onChangeTheme={setThemeMode}
+          onAuthSuccess={async (userObj) => {
+            setCurrentUser(userObj);
+            await fetchFullState();
+            navigateToPage('chat');
+          }}
+        />
+      </>
+    );
+  }
 
   const currentPageIdx = PAGE_ROUTES.findIndex((p) => p.id === activePage);
   const currentPageDef = PAGE_ROUTES[currentPageIdx] || PAGE_ROUTES[0];
@@ -463,13 +550,12 @@ export const App: React.FC = () => {
   const routeGroups = [
     'HOME ASSISTANT',
     'DATA & VECTOR PIPELINE',
-    'AGENTIC INFERENCE & MODELS',
-    'AUDIT & SQLITE VAULT',
+    'AUDIT & INSPECTION',
+    'SYSTEM & ACCOUNT',
   ];
 
   return (
     <>
-      {/* Spatial Deep-Space & Volumetric Light Canvas (Active in Apple Liquid Glass Theme) */}
       <SpatialLiquidBackground
         active={themeMode === 'liquid-glass'}
         flowIntensity={spatialFlow}
@@ -613,57 +699,75 @@ export const App: React.FC = () => {
             </nav>
           </div>
 
-          <div
-            className="clay-well"
-            style={{
-              padding: '14px 16px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-            }}
-          >
+          {/* Bottom User Account & Vault Telemetry Card */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div
-              className="font-mono"
+              className="clay-well"
               style={{
-                fontSize: '0.68rem',
-                fontWeight: 700,
-                color: 'var(--ink-muted)',
-              }}
-            >
-              LIVE ENGINE TELEMETRY
-            </div>
-            <div
-              style={{
+                padding: '12px 14px',
                 display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: '0.78rem',
-                fontWeight: 700,
+                flexDirection: 'column',
+                gap: 6,
               }}
             >
-              <span>Indexed Documents</span>
-              <span className="font-mono">{stats?.totalDocuments || 0}</span>
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: '0.78rem',
-                fontWeight: 700,
-              }}
-            >
-              <span>HNSW Vector Chunks</span>
-              <span className="font-mono">{stats?.totalChunks || 0}</span>
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: '0.78rem',
-                fontWeight: 700,
-              }}
-            >
-              <span>Saved SQLite Findings</span>
-              <span className="font-mono">{savedFindings.length}</span>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <User size={15} />
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      className="font-display"
+                      style={{
+                        fontSize: '0.84rem',
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {currentUser.displayName}
+                    </div>
+                    <div
+                      className="font-mono"
+                      style={{ fontSize: '0.67rem', color: 'var(--ink-muted)' }}
+                    >
+                      @{currentUser.username}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  title="Sign Out"
+                  onClick={handleLogout}
+                  className="clay-btn"
+                  style={{ padding: '6px 9px', fontSize: '0.7rem' }}
+                >
+                  <LogOut size={13} />
+                </button>
+              </div>
+
+              <div
+                style={{
+                  borderTop: '1px solid var(--clay-border-light)',
+                  paddingTop: 6,
+                  marginTop: 2,
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                }}
+                className="font-mono"
+              >
+                <span>{stats?.totalDocuments || 0} DOCS</span>
+                <span>{stats?.totalChunks || 0} VEC</span>
+                <span>{savedFindings.length} FINDINGS</span>
+              </div>
             </div>
           </div>
         </aside>
@@ -682,7 +786,7 @@ export const App: React.FC = () => {
                 }}
               >
                 <span className="clay-tag clay-tag-terracotta">
-                  PAGE {currentPageDef.step} OF 10 // {currentPageDef.group}
+                  PAGE {currentPageDef.step} OF 09 // {currentPageDef.group}
                 </span>
                 <span className="clay-tag clay-tag-sage">
                   <Shield size={12} />
@@ -714,48 +818,15 @@ export const App: React.FC = () => {
                 gap: 10,
               }}
             >
-              {/* Top Theme & Spatial Flow Controls */}
               <button
                 type="button"
-                onClick={() =>
-                  setThemeMode(themeMode === 'clay' ? 'liquid-glass' : 'clay')
-                }
-                className={`clay-btn ${
-                  themeMode === 'liquid-glass'
-                    ? 'clay-btn-cobalt'
-                    : 'clay-btn-charcoal'
-                }`}
-                style={{ padding: '10px 16px', fontSize: '0.78rem' }}
+                onClick={() => navigateToPage('settings')}
+                className="clay-btn"
+                style={{ padding: '10px 14px', fontSize: '0.76rem' }}
               >
-                {themeMode === 'clay' ? (
-                  <>
-                    <Orbit size={15} />
-                    <span>SWITCH TO LIQUID GLASS</span>
-                  </>
-                ) : (
-                  <>
-                    <Sun size={15} />
-                    <span>SWITCH TO TACTILE CLAY</span>
-                  </>
-                )}
+                <Settings size={14} />
+                <span>SETTINGS</span>
               </button>
-
-              {themeMode === 'liquid-glass' && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSpatialFlow(
-                      spatialFlow === 'dynamic' ? 'calm' : 'dynamic'
-                    )
-                  }
-                  className="clay-btn"
-                  style={{ padding: '10px 14px', fontSize: '0.75rem' }}
-                >
-                  <span>
-                    SPACE FLOW: {spatialFlow.toUpperCase()}
-                  </span>
-                </button>
-              )}
 
               {prevPageDef && (
                 <button
@@ -814,7 +885,7 @@ export const App: React.FC = () => {
                         metrics: turn.metrics,
                       });
                     }}
-                    onOpenModelsPage={() => navigateToPage('models')}
+                    onOpenModelsPage={() => navigateToPage('settings')}
                   />
                 )}
 
@@ -897,22 +968,6 @@ export const App: React.FC = () => {
                   />
                 )}
 
-                {activePage === 'models' && (
-                  <ModelRouterPage
-                    config={config}
-                    onUpdateConfig={handleUpdateConfig}
-                    onGoToOfflinePortal={() => navigateToPage('offline-portal')}
-                  />
-                )}
-
-                {activePage === 'offline-portal' && (
-                  <OfflinePortalPage
-                    config={config}
-                    modelCatalog={modelCatalog}
-                    onUpdateConfig={handleUpdateConfig}
-                  />
-                )}
-
                 {activePage === 'metrics' && (
                   <MetricsAndEvaluationSuite
                     latestQuery={latestQuery}
@@ -929,6 +984,27 @@ export const App: React.FC = () => {
                     latestQuery={latestQuery}
                     onSaveFinding={handleSaveFinding}
                     onDeleteFinding={handleDeleteFinding}
+                  />
+                )}
+
+                {activePage === 'settings' && (
+                  <SettingsPage
+                    user={currentUser}
+                    config={config}
+                    modelCatalog={modelCatalog}
+                    themeMode={themeMode}
+                    spatialFlow={spatialFlow}
+                    onChangeTheme={setThemeMode}
+                    onChangeSpatialFlow={setSpatialFlow}
+                    onUpdateConfig={handleUpdateConfig}
+                    onUserUpdated={(u) => setCurrentUser(u)}
+                    onLogout={handleLogout}
+                    onAccountDeleted={() => {
+                      setStoredAuthToken(null);
+                      setCurrentUser(null);
+                      clearWorkspaceState();
+                      navigateToPage('chat');
+                    }}
                   />
                 )}
               </motion.main>
