@@ -27,62 +27,70 @@ export const ThemeSlideDrawer: React.FC<ThemeSlideDrawerProps> = ({
   return (
     <AnimatePresence>
       {isOpen && (
-        <>
-          {/* Click-outside subtle backdrop */}
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          {/* Click-outside subtle translucent backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.22 }}
+            transition={{ duration: 0.2 }}
             onClick={onClose}
             style={{
               position: 'fixed',
               inset: 0,
-              zIndex: 90,
-              backgroundColor: 'rgba(10, 14, 22, 0.36)',
-              backdropFilter: 'blur(4px)',
-              WebkitBackdropFilter: 'blur(4px)',
+              backgroundColor: 'rgba(10, 14, 22, 0.34)',
+              backdropFilter: 'blur(5px)',
+              WebkitBackdropFilter: 'blur(5px)',
             }}
           />
 
-          {/* Slide-Over Popup Drawer */}
-          <motion.aside
-            initial={{ x: '105%', opacity: 0.6 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: '105%', opacity: 0.6 }}
-            transition={{ type: 'spring', stiffness: 310, damping: 32 }}
+          {/* Floating Centered Theme & Palette Popup Card */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: 14 }}
+            transition={{ type: 'spring', stiffness: 360, damping: 28 }}
             className="clay-card"
             style={{
-              position: 'fixed',
-              top: 20,
-              right: 20,
-              bottom: 20,
+              position: 'relative',
+              zIndex: 101,
               width: '100%',
-              maxWidth: 440,
-              zIndex: 100,
+              maxWidth: 780,
+              maxHeight: '86vh',
               display: 'flex',
               flexDirection: 'column',
-              padding: '24px 24px 20px',
+              padding: '26px 28px',
               overflow: 'hidden',
             }}
           >
-            {/* Drawer Header */}
+            {/* Floating Popup Header */}
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
+                gap: 16,
                 paddingBottom: 16,
                 marginBottom: 18,
                 borderBottom: '1.5px solid var(--clay-border-light)',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div
                   style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 13,
+                    width: 40,
+                    height: 40,
+                    borderRadius: 14,
                     backgroundColor: 'var(--clay-terracotta)',
                     color: '#ffffff',
                     display: 'flex',
@@ -91,20 +99,20 @@ export const ThemeSlideDrawer: React.FC<ThemeSlideDrawerProps> = ({
                     boxShadow: 'var(--shadow-clay-terracotta)',
                   }}
                 >
-                  <Palette size={19} />
+                  <Palette size={20} />
                 </div>
                 <div>
                   <h2
                     className="font-display"
-                    style={{ fontSize: '1.16rem', fontWeight: 700 }}
+                    style={{ fontSize: '1.2rem', fontWeight: 700 }}
                   >
-                    Theme &amp; Palette Studio
+                    Theme &amp; Color Palette
                   </h2>
                   <div
                     className="font-mono"
                     style={{ fontSize: '0.68rem', color: 'var(--ink-muted)' }}
                   >
-                    LIVE MATERIAL &amp; COLOR PREVIEW
+                    SELECT MATERIAL SYSTEM &amp; COLOR PALETTE
                   </div>
                 </div>
               </div>
@@ -114,234 +122,190 @@ export const ThemeSlideDrawer: React.FC<ThemeSlideDrawerProps> = ({
                 onClick={onClose}
                 className="clay-btn"
                 style={{ padding: '8px 10px' }}
-                aria-label="Close Theme Drawer"
+                aria-label="Close Theme Popup"
               >
                 <X size={16} />
               </button>
             </div>
 
-            {/* Scrollable Body */}
+            {/* Material System Row + Optional Spatial Flow Toggle */}
             <div
               style={{
-                flex: 1,
-                overflowY: 'auto',
-                paddingRight: 4,
                 display: 'flex',
-                flexDirection: 'column',
-                gap: 20,
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 12,
+                marginBottom: 18,
               }}
             >
-              {/* Section 1: Material Mode */}
-              <div>
+              <div
+                className="clay-well"
+                style={{
+                  padding: 6,
+                  borderRadius: 18,
+                  display: 'inline-flex',
+                  gap: 8,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => onChangeTheme('clay')}
+                  className={`clay-btn ${
+                    themeMode === 'clay' ? 'clay-btn-terracotta' : ''
+                  }`}
+                  style={{ padding: '9px 18px', fontSize: '0.8rem' }}
+                >
+                  <Sun size={15} />
+                  <span>TACTILE CLAY</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onChangeTheme('liquid-glass')}
+                  className={`clay-btn ${
+                    themeMode === 'liquid-glass' ? 'clay-btn-cobalt' : ''
+                  }`}
+                  style={{ padding: '9px 18px', fontSize: '0.8rem' }}
+                >
+                  <Orbit size={15} />
+                  <span>SPATIAL LIQUID GLASS</span>
+                </button>
+              </div>
+
+              {themeMode === 'liquid-glass' && (
                 <div
-                  className="font-mono"
+                  className="clay-well"
                   style={{
-                    fontSize: '0.7rem',
-                    fontWeight: 700,
-                    color: 'var(--ink-muted)',
-                    marginBottom: 10,
-                    letterSpacing: '0.06em',
+                    padding: '6px 10px',
+                    borderRadius: 16,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
                   }}
                 >
-                  01 // MATERIAL SYSTEM
-                </div>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: 12,
-                  }}
-                >
+                  <Wind size={14} />
+                  <span
+                    className="font-mono"
+                    style={{ fontSize: '0.69rem', fontWeight: 700 }}
+                  >
+                    FLOW:
+                  </span>
                   <button
                     type="button"
-                    onClick={() => onChangeTheme('clay')}
                     className={`clay-btn ${
-                      themeMode === 'clay' ? 'clay-btn-terracotta' : ''
+                      spatialFlow === 'dynamic' ? 'clay-btn-sage' : ''
                     }`}
-                    style={{
-                      flexDirection: 'column',
-                      padding: '16px 12px',
-                      gap: 8,
-                    }}
+                    style={{ padding: '5px 10px', fontSize: '0.69rem' }}
+                    onClick={() => onChangeSpatialFlow('dynamic')}
                   >
-                    <Sun size={20} />
-                    <span>TACTILE CLAY</span>
+                    DYNAMIC
                   </button>
-
                   <button
                     type="button"
-                    onClick={() => onChangeTheme('liquid-glass')}
                     className={`clay-btn ${
-                      themeMode === 'liquid-glass' ? 'clay-btn-cobalt' : ''
+                      spatialFlow === 'calm' ? 'clay-btn-sage' : ''
                     }`}
-                    style={{
-                      flexDirection: 'column',
-                      padding: '16px 12px',
-                      gap: 8,
-                    }}
+                    style={{ padding: '5px 10px', fontSize: '0.69rem' }}
+                    onClick={() => onChangeSpatialFlow('calm')}
                   >
-                    <Orbit size={20} />
-                    <span>LIQUID GLASS</span>
+                    CALM
                   </button>
                 </div>
+              )}
+            </div>
 
-                {/* Spatial Flow Speed Toggle (Only shown in Liquid Glass) */}
-                {themeMode === 'liquid-glass' && (
-                  <div
-                    className="clay-well"
-                    style={{
-                      marginTop: 12,
-                      padding: '10px 14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 10,
-                    }}
-                  >
-                    <div
+            {/* 3x3 Floating Color Palette Grid (All 9 Palettes Visible at Once) */}
+            <div
+              style={{
+                overflowY: 'auto',
+                paddingRight: 2,
+              }}
+            >
+              <div className="grid-3" style={{ gap: 14 }}>
+                {COLOR_PALETTES.map((pal) => {
+                  const isSelected = pal.id === paletteId;
+                  return (
+                    <motion.div
+                      key={pal.id}
+                      whileHover={{ y: -3, scale: 1.015 }}
+                      whileTap={{ scale: 0.985 }}
+                      onClick={() => onChangePalette(pal.id)}
+                      className="clay-card-alt"
                       style={{
+                        cursor: 'pointer',
+                        padding: '13px 14px',
+                        borderColor: isSelected
+                          ? 'var(--clay-terracotta)'
+                          : 'var(--clay-border-light)',
                         display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        fontSize: '0.76rem',
-                        fontWeight: 700,
+                        flexDirection: 'column',
+                        gap: 9,
                       }}
                     >
-                      <Wind size={14} />
-                      <span>3D Droplet Flow</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button
-                        type="button"
-                        className={`clay-btn ${
-                          spatialFlow === 'dynamic' ? 'clay-btn-sage' : ''
-                        }`}
-                        style={{ padding: '5px 11px', fontSize: '0.7rem' }}
-                        onClick={() => onChangeSpatialFlow('dynamic')}
-                      >
-                        DYNAMIC
-                      </button>
-                      <button
-                        type="button"
-                        className={`clay-btn ${
-                          spatialFlow === 'calm' ? 'clay-btn-sage' : ''
-                        }`}
-                        style={{ padding: '5px 11px', fontSize: '0.7rem' }}
-                        onClick={() => onChangeSpatialFlow('calm')}
-                      >
-                        CALM
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Section 2: 9 Curated Color Palettes */}
-              <div>
-                <div
-                  className="font-mono"
-                  style={{
-                    fontSize: '0.7rem',
-                    fontWeight: 700,
-                    color: 'var(--ink-muted)',
-                    marginBottom: 10,
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  02 // COLOR PALETTES ({COLOR_PALETTES.length})
-                </div>
-
-                <div
-                  style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
-                >
-                  {COLOR_PALETTES.map((pal) => {
-                    const isSelected = pal.id === paletteId;
-                    return (
-                      <motion.div
-                        key={pal.id}
-                        whileHover={{ y: -2 }}
-                        whileTap={{ scale: 0.99 }}
-                        onClick={() => onChangePalette(pal.id)}
-                        className="clay-card-alt"
+                      <div
                         style={{
-                          cursor: 'pointer',
-                          padding: '14px 16px',
-                          borderColor: isSelected
-                            ? 'var(--clay-terracotta)'
-                            : 'var(--clay-border-light)',
                           display: 'flex',
-                          flexDirection: 'column',
-                          gap: 10,
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 6,
                         }}
                       >
-                        <div
+                        <span
+                          className="font-display"
                           style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
+                            fontSize: '0.88rem',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
                           }}
                         >
+                          {pal.name}
+                        </span>
+                        {isSelected && (
                           <span
-                            className="font-display"
-                            style={{ fontSize: '0.94rem', fontWeight: 700 }}
+                            className="clay-tag clay-tag-sage"
+                            style={{ padding: '2px 7px', fontSize: '0.62rem' }}
                           >
-                            {pal.name}
+                            <Check size={10} />
                           </span>
-                          {isSelected && (
-                            <span
-                              className="clay-tag clay-tag-sage"
-                              style={{ padding: '3px 9px', fontSize: '0.65rem' }}
-                            >
-                              <Check size={11} />
-                              <span>ACTIVE</span>
-                            </span>
-                          )}
-                        </div>
+                        )}
+                      </div>
 
-                        {/* Stacked Capsule Swatches */}
-                        <div
-                          className="clay-well"
-                          style={{
-                            padding: 6,
-                            borderRadius: 14,
-                            display: 'flex',
-                            gap: 5,
-                          }}
-                        >
-                          {pal.swatches.map((hex) => (
-                            <div
-                              key={hex}
-                              title={hex}
-                              style={{
-                                flex: 1,
-                                height: 28,
-                                borderRadius: 8,
-                                backgroundColor: hex,
-                                border: '1.5px solid rgba(255,255,255,0.45)',
-                                boxShadow:
-                                  'inset 1.5px 1.5px 3px rgba(255,255,255,0.35), inset -1.5px -1.5px 3px rgba(0,0,0,0.28)',
-                              }}
-                            />
-                          ))}
-                        </div>
-
-                        <div
-                          className="font-mono"
-                          style={{
-                            fontSize: '0.66rem',
-                            color: 'var(--ink-secondary)',
-                          }}
-                        >
-                          {pal.subtitle}
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </div>
+                      {/* Stacked Capsule Swatches */}
+                      <div
+                        className="clay-well"
+                        style={{
+                          padding: 5,
+                          borderRadius: 12,
+                          display: 'flex',
+                          gap: 4,
+                        }}
+                      >
+                        {pal.swatches.map((hex) => (
+                          <div
+                            key={hex}
+                            title={hex}
+                            style={{
+                              flex: 1,
+                              height: 26,
+                              borderRadius: 7,
+                              backgroundColor: hex,
+                              border: '1.5px solid rgba(255,255,255,0.45)',
+                              boxShadow:
+                                'inset 1.5px 1.5px 2px rgba(255,255,255,0.35), inset -1.5px -1.5px 2px rgba(0,0,0,0.28)',
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </motion.div>
+                  );
+                })}
               </div>
             </div>
-          </motion.aside>
-        </>
+          </motion.div>
+        </div>
       )}
     </AnimatePresence>
   );
