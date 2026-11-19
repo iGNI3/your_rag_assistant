@@ -1,5 +1,6 @@
 flask>=3.1.0
 flask-cors>=6.0.0
+gunicorn>=22.0.0
 pypdf>=6.0.0
 python-docx>=1.2.0
 openpyxl>=3.1.5

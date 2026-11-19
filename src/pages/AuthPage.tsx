@@ -12,7 +12,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { UserProfile } from '../types';
-import { setStoredAuthToken } from '../api';
+import { apiUrl, setStoredAuthToken } from '../api';
 
 interface AuthPageProps {
   themeMode: 'clay' | 'liquid-glass' | 'vision-ceramic';
@@ -49,7 +49,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     setErrorMsg(null);
     setIsSubmitting(true);
     try {
-      const resp = await fetch('/api/auth/login', {
+      const resp = await fetch(apiUrl('/api/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -65,7 +65,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       setStoredAuthToken(data.token);
       onAuthSuccess(data.user, data.token);
     } catch {
-      setErrorMsg('Cannot reach the Python RAG backend at localhost:3001.');
+      setErrorMsg(
+        'Cannot reach the Python RAG backend. If deployed on Render Free tier, wait ~30 seconds for wake-up and try again.'
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -80,7 +82,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     }
     setIsSubmitting(true);
     try {
-      const resp = await fetch('/api/auth/register', {
+      const resp = await fetch(apiUrl('/api/auth/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -99,7 +101,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       setStoredAuthToken(data.token);
       onAuthSuccess(data.user, data.token);
     } catch {
-      setErrorMsg('Cannot reach the Python RAG backend at localhost:3001.');
+      setErrorMsg(
+        'Cannot reach the Python RAG backend. If deployed on Render Free tier, wait ~30 seconds for wake-up and try again.'
+      );
     } finally {
       setIsSubmitting(false);
     }

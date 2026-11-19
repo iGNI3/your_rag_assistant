@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { authFetch } from '../api';
 import { motion } from 'framer-motion';
 import {
   Cpu,
@@ -125,7 +126,7 @@ export const ModelHubAndPortal: React.FC<ModelHubAndPortalProps> = ({
   const runPathScan = async (pathToScan: string) => {
     setIsScanning(true);
     try {
-      const resp = await fetch('/api/models/scan-path', {
+      const resp = await authFetch('/api/models/scan-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: pathToScan }),
@@ -141,7 +142,7 @@ export const ModelHubAndPortal: React.FC<ModelHubAndPortalProps> = ({
 
   const probeLocalDaemons = async () => {
     try {
-      const resp = await fetch('/api/models/probe-local-daemons');
+      const resp = await authFetch('/api/models/probe-local-daemons');
       const data = await resp.json();
       setDaemonStatus(data);
     } catch {

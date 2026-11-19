@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { authFetch } from '../api';
 import { motion } from 'framer-motion';
 import {
   Cpu,
@@ -95,7 +96,7 @@ export const ModelRouterPage: React.FC<ModelRouterPageProps> = ({
 
   const probeLocalDaemons = async () => {
     try {
-      const resp = await fetch('/api/models/probe-local-daemons');
+      const resp = await authFetch('/api/models/probe-local-daemons');
       const data = await resp.json();
       setDaemonStatus(data);
     } catch {

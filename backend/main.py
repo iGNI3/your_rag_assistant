@@ -2,11 +2,16 @@ import json
 import os
 import random
 import re
+import sys
 import time
 import urllib.request
 from datetime import datetime, timezone
 from functools import wraps
 from typing import Dict, Any, List, Optional
+
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
@@ -21,15 +26,33 @@ from llm_engine import (
 )
 from seed_corpus import SEED_CORPUS_DOCUMENTS
 
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
-DATA_DIR = os.path.join(WORKSPACE_ROOT, "data")
+DATA_DIR = os.environ.get("CLAYRAG_DATA_DIR") or os.path.join(WORKSPACE_ROOT, "data")
 
 app = Flask(__name__)
-CORS(app)
+
+_raw_origins = (os.environ.get("ALLOWED_ORIGINS") or "*").strip()
+_cors_origins: Any = "*" if _raw_origins == "*" else [o.strip() for o in _raw_origins.split(",") if o.strip()]
+CORS(
+    app,
+    resources={r"/api/*": {"origins": _cors_origins}},
+    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
 
 vector_db = HybridVectorDatabase(DATA_DIR)
 sql_db = vector_db.sql_db
+
+
+@app.route("/", methods=["GET"])
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    return jsonify({
+        "status": "ok",
+        "service": "clayrag-python-backend",
+        "version": "1.0.0",
+        "dataDir": DATA_DIR,
+    })
 
 
 def get_default_config() -> Dict[str, Any]:
@@ -636,5 +659,6 @@ def probe_daemons():
 
 
 if __name__ == "__main__":
-    print("Python ClayRAG Multi-User Agentic Engine + SQLite3 Vault listening on http://localhost:3001")
-    app.run(host="0.0.0.0", port=3001, debug=False)
+    port = int(os.environ.get("PORT", "3001"))
+    print(f"Python ClayRAG Multi-User Agentic Engine + SQLite3 Vault listening on http://0.0.0.0:{port}")
+    app.run(host="0.0.0.0", port=port, debug=False)
