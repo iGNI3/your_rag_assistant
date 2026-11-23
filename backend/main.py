@@ -163,7 +163,14 @@ def execute_rag_pipeline(prompt: str, config_used: Dict[str, Any], user_id: str)
                 corpus_keywords.append(kw)
     corpus_keywords = corpus_keywords[:50]
 
-    prompt_reshape = reshape_user_prompt(prompt, corpus_keywords, config_used)
+    recent_history = sql_db.load_query_history(user_id, limit=3)
+
+    prompt_reshape = reshape_user_prompt(
+        prompt,
+        corpus_keywords,
+        config_used,
+        recent_history=recent_history,
+    )
     retrieval = vector_db.hybrid_retrieve_and_rerank(
         original_prompt=prompt,
         reshaped_primary_query=prompt_reshape["reshapedPrimaryQuery"],
@@ -179,6 +186,7 @@ def execute_rag_pipeline(prompt: str, config_used: Dict[str, Any], user_id: str)
         config=config_used,
         timings=retrieval["timings"],
         user_documents=user_docs,
+        recent_history=recent_history,
     )
 
     resp_obj = {

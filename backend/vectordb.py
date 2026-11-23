@@ -487,7 +487,7 @@ class HybridVectorDatabase:
             )
             rrf_scores[cid] = round(min(0.99, blended), 4)
 
-        top_k_init = max(int(config.get("topKInitial", 10)), int(config.get("topKReranked", 5)) + 3)
+        top_k_init = max(int(config.get("topKInitial", 16)), int(config.get("topKReranked", 5)) + 12, 22)
         initial_candidates = sorted(
             all_chunks, key=lambda c: rrf_scores.get(c["id"], 0.0), reverse=True
         )[:top_k_init]
@@ -495,8 +495,9 @@ class HybridVectorDatabase:
         mmr_lambda = float(config.get("mmrLambda", 0.78))
         mmr_selected: List[Dict[str, Any]] = []
         remaining = list(initial_candidates)
+        mmr_limit = max(int(config.get("topKInitial", 16)), 18)
 
-        while remaining and len(mmr_selected) < int(config.get("topKInitial", 10)):
+        while remaining and len(mmr_selected) < mmr_limit:
             best_idx = 0
             best_val = -1e9
             for i, cand in enumerate(remaining):
@@ -506,7 +507,7 @@ class HybridVectorDatabase:
                     sim = compute_vector_similarity(cand["embedding"], alr["chunk"]["embedding"], "cosine")
                     if sim > max_red:
                         max_red = sim
-                mmr_val = mmr_lambda * rel - (1.0 - mmr_lambda) * max_red * 0.45
+                mmr_val = mmr_lambda * rel - (1.0 - mmr_lambda) * max_red * 0.42
                 if mmr_val > best_val:
                     best_val = mmr_val
                     best_idx = i
@@ -527,8 +528,17 @@ class HybridVectorDatabase:
         orig_keywords = extract_top_keywords(original_prompt, 10)
         if not orig_keywords:
             orig_keywords = [w for w in re.split(r"\W+", original_prompt.lower()) if len(w) >= 2]
-        query_keywords = orig_keywords or extract_top_keywords(reshaped_primary_query, 10)
+        expanded_keywords = extract_top_keywords(
+            f"{reshaped_primary_query} {' '.join(sub_queries)} {hyde_document}",
+            18,
+        )
+        all_query_keywords = list(dict.fromkeys(orig_keywords + expanded_keywords))
         crag_threshold = float(config.get("cragThreshold", 0.34))
+
+        # Map (documentId, chunk_index) -> chunk for adjacent context stitching
+        chunk_by_doc_idx: Dict[Tuple[str, int], Dict[str, Any]] = {
+            (c["documentId"], int(c.get("index", 0))): c for c in all_chunks
+        }
 
         scored_results: List[Dict[str, Any]] = []
         for item in mmr_selected:
@@ -540,29 +550,37 @@ class HybridVectorDatabase:
             sparse = sparse_scores.get(cid, 0.0)
             rrf = rrf_scores.get(cid, 0.0)
 
-            exact_hits = sum(
+            orig_hits = sum(
                 1
-                for kw in query_keywords
+                for kw in orig_keywords
                 if kw.lower() in content_lower or stem_word(kw) in sparse_map
             )
-            coverage_ratio = (exact_hits / len(query_keywords)) if query_keywords else 0.5
+            exp_hits = sum(
+                1
+                for kw in expanded_keywords
+                if kw not in orig_keywords and (kw.lower() in content_lower or stem_word(kw) in sparse_map)
+            )
+            total_hits = orig_hits + exp_hits
+
+            orig_ratio = (orig_hits / max(1, len(orig_keywords))) if orig_keywords else 0.4
+            exp_ratio = (exp_hits / max(1, len(expanded_keywords))) if expanded_keywords else 0.0
+            coverage_ratio = min(1.0, orig_ratio * 0.65 + exp_ratio * 0.55)
 
             phrase_bonus = 0.0
-            for i in range(len(query_keywords) - 1):
-                pattern = re.escape(query_keywords[i]) + r"[\s\S]{0,60}" + re.escape(query_keywords[i + 1])
+            for i in range(len(all_query_keywords) - 1):
+                pattern = re.escape(all_query_keywords[i]) + r"[\s\S]{0,65}" + re.escape(all_query_keywords[i + 1])
                 if re.search(pattern, ch["content"], flags=re.IGNORECASE):
-                    phrase_bonus += 0.12
+                    phrase_bonus += 0.1
 
             structural_quality = (ch["coherenceScore"] + ch["informationDensity"]) / 200.0
-            # Heavily reward direct lexical & stem coverage of the user's actual prompt keywords
             raw_rerank = (
-                rrf * 0.38
-                + coverage_ratio * 0.44
-                + min(0.22, phrase_bonus)
-                + structural_quality * 0.06
+                rrf * 0.42
+                + coverage_ratio * 0.40
+                + min(0.20, phrase_bonus)
+                + structural_quality * 0.08
             )
-            if query_keywords and exact_hits == 0:
-                raw_rerank *= 0.55
+            if all_query_keywords and total_hits == 0:
+                raw_rerank *= 0.62
 
             rerank_score = (
                 round(min(0.995, raw_rerank), 4)
@@ -570,23 +588,30 @@ class HybridVectorDatabase:
                 else rrf
             )
 
-            if (rerank_score >= max(0.50, crag_threshold + 0.12) and exact_hits >= 1) or coverage_ratio >= 0.45:
+            if (rerank_score >= max(0.46, crag_threshold + 0.10) and total_hits >= 1) or coverage_ratio >= 0.38:
                 crag_grade = "HIGHLY_RELEVANT"
                 crag_reason = (
-                    f"High semantic alignment ({rerank_score * 100:.1f}%) with direct lexical anchor coverage "
-                    f"({exact_hits}/{len(query_keywords)} prompt entities)."
+                    f"High semantic alignment ({rerank_score * 100:.1f}%) matching {orig_hits} direct + "
+                    f"{exp_hits} inferred domain entities."
                 )
-            elif exact_hits >= 1 and rerank_score >= crag_threshold * 0.85:
+            elif total_hits >= 1 or rerank_score >= crag_threshold * 0.85:
                 crag_grade = "PARTIAL_SUPPORT"
                 crag_reason = (
-                    f"Contextual support ({rerank_score * 100:.1f}%) matching {exact_hits} prompt term(s) in [{ch['sectionPath']}]."
+                    f"Contextual support ({rerank_score * 100:.1f}%) matching {total_hits} domain term(s) in [{ch['sectionPath']}]."
                 )
             else:
                 crag_grade = "IRRELEVANT_NOISE"
                 crag_reason = (
-                    f"Below CRAG confidence gate ({rerank_score * 100:.1f}%, {exact_hits} direct prompt hits); "
+                    f"Below CRAG confidence gate ({rerank_score * 100:.1f}%, 0 domain hits); "
                     f"pruned to prevent context dilution."
                 )
+
+            # Stitch adjacent neighbor context (next chunk in same doc) into parentContext if none exists
+            parent_ctx = ch.get("parentContext")
+            if not parent_ctx:
+                next_ch = chunk_by_doc_idx.get((ch["documentId"], int(ch.get("index", 0)) + 1))
+                if next_ch:
+                    parent_ctx = next_ch["content"][:500]
 
             scored_results.append({
                 "chunkId": cid,
@@ -595,7 +620,7 @@ class HybridVectorDatabase:
                 "documentFormat": ch["documentFormat"],
                 "sectionPath": ch["sectionPath"],
                 "content": ch["content"],
-                "parentContext": ch.get("parentContext"),
+                "parentContext": parent_ctx,
                 "tokenCount": ch["tokenCount"],
                 "strategy": ch["strategy"],
                 "denseScore": dense,
@@ -619,14 +644,15 @@ class HybridVectorDatabase:
             res["finalRank"] = idx + 1
             res["rankDelta"] = res["initialRank"] - res["finalRank"]
 
-        top_k_reranked = int(config.get("topKReranked", 5))
+        # Provide a richer context window (up to 8 chunks) so the LLM sees exclusions, waiting periods, and clauses together
+        top_k_reranked = max(int(config.get("topKReranked", 5)), 8)
         if config.get("enableCragFilter", True):
             valid = [r for r in scored_results if r["cragGrade"] != "IRRELEVANT_NOISE"]
             pruned = [r for r in scored_results if r["cragGrade"] == "IRRELEVANT_NOISE"]
             if len(valid) >= 1:
                 retrieved_chunks = valid[:top_k_reranked]
             else:
-                retrieved_chunks = scored_results[:min(2, top_k_reranked)]
+                retrieved_chunks = scored_results[:min(4, top_k_reranked)]
                 pruned = scored_results[len(retrieved_chunks):]
         else:
             retrieved_chunks = scored_results[:top_k_reranked]

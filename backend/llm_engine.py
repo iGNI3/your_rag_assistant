@@ -424,7 +424,7 @@ def call_external_llm_if_available(
                 {
                     "systemInstruction": {"parts": [{"text": system_prompt}]},
                     "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-                    "generationConfig": {"temperature": 0.2},
+                    "generationConfig": {"temperature": 0.25, "maxOutputTokens": 2048},
                 },
                 {},
             )
@@ -444,7 +444,7 @@ def call_external_llm_if_available(
                 "https://api.anthropic.com/v1/messages",
                 {
                     "model": slug,
-                    "max_tokens": 1024,
+                    "max_tokens": 2048,
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": user_prompt}],
                 },
@@ -469,10 +469,144 @@ def _is_conversational_greeting(prompt: str) -> bool:
     return any(re.match(pat, cleaned) for pat in greeting_patterns)
 
 
+def _infer_domain_expansion_terms(prompt: str) -> List[str]:
+    """
+    Maps everyday user questions and colloquial procedure/policy terms to formal
+    document/legal/insurance/technical vocabulary so retrieval immediately pulls
+    governing exclusions, waiting periods, thresholds, and coverage clauses on the first ask.
+    """
+    p_low = prompt.lower()
+    inferred: List[str] = []
+
+    rules: List[Tuple[str, List[str]]] = [
+        (
+            r"\b(lasik|eye|eyesight|glasses|spectacle|lens|vision|cataract|cornea|optical| myopia|hyperopia)\b",
+            [
+                "refractive error",
+                "dioptres",
+                "cosmetic or plastic surgery",
+                "Excl08",
+                "Excl15",
+                "eye surgery",
+                "day care procedure",
+                "exclusions",
+                "waiting period",
+            ],
+        ),
+        (
+            r"\b(next month|this month|tomorrow|soon|immediately|waiting|wait|eligible|eligibility|when can i|how long)\b",
+            [
+                "waiting period",
+                "30 days",
+                "initial waiting period",
+                "specified disease",
+                "24 months",
+                "2 years",
+                "pre-existing disease",
+                "waiver",
+                "Excl01",
+                "Excl02",
+                "Excl03",
+            ],
+        ),
+        (
+            r"\b(cosmetic|plastic|aesthetic|beauty|hair|botox|liposuction|rhinoplasty)\b",
+            [
+                "cosmetic or plastic surgery",
+                "Excl08",
+                "exclusions",
+                "reconstructive",
+                "accident",
+                "medically necessary",
+            ],
+        ),
+        (
+            r"\b(long term|chronic|pre-existing|pre existing|ped|diabetes|hypertension|thyroid|asthma|heart|cancer)\b",
+            [
+                "pre-existing disease",
+                "Excl01",
+                "specified disease",
+                "waiting period",
+                "chronic",
+                "waiver",
+                "coverage",
+            ],
+        ),
+        (
+            r"\b(cashless|claim|reimburse|reimbursement|hospital|network|admit|admission|bill|discharge)\b",
+            [
+                "cashless service",
+                "pre-authorization",
+                "network hospital",
+                "claims procedure",
+                "reimbursement",
+                "30 days",
+                "Annexure",
+                "TPA",
+            ],
+        ),
+        (
+            r"\b(dental|tooth|teeth|gum|root canal|braces|orthodontic|oral)\b",
+            [
+                "dental treatment",
+                "oral surgery",
+                "accident",
+                "hospitalization",
+                "exclusions",
+            ],
+        ),
+        (
+            r"\b(maternity|pregnancy|pregnant|delivery|childbirth|baby|newborn|c-section|caesarean)\b",
+            [
+                "maternity expenses",
+                "childbirth",
+                "delivery",
+                "waiting period",
+                "9 months",
+                "newborn baby",
+                "Excl18",
+            ],
+        ),
+        (
+            r"\b(room|icu|bed|rent|limit|cap|capping|sum insured|deductible|copay|co-pay)\b",
+            [
+                "room rent",
+                "ICU charges",
+                "capping",
+                "sub-limit",
+                "sum insured",
+                "proportionate deduction",
+                "schedule",
+            ],
+        ),
+        (
+            r"\b(surgery|operation|procedure|treatment|covered|cover|insurance|policy|insured)\b",
+            [
+                "coverage",
+                "exclusions",
+                "waiting period",
+                "day care",
+                "inpatient",
+                "hospitalization",
+                "medically necessary",
+            ],
+        ),
+    ]
+
+    for pattern, terms in rules:
+        if re.search(pattern, p_low):
+            for t in terms:
+                if t not in inferred:
+                    inferred.append(t)
+
+    return inferred
+
+
 def reshape_user_prompt(
     raw_prompt: str,
     corpus_keywords: List[str],
     config: Dict[str, Any],
+    recent_history: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     t0 = time.time()
     cleaned_input = raw_prompt.strip()
@@ -481,22 +615,23 @@ def reshape_user_prompt(
         detected_intent = "CONVERSATIONAL_GREETING"
     elif re.search(r"compare|vs|versus|difference|benchmark|tradeoff|better", cleaned_input, re.I):
         detected_intent = "COMPARATIVE_AUDIT"
-    elif re.search(r"how to|steps|configure|setup|implement|guide|pipeline", cleaned_input, re.I):
+    elif re.search(r"how to|steps|configure|setup|implement|guide|pipeline|procedure|claim", cleaned_input, re.I):
         detected_intent = "PROCEDURAL_HOWTO"
-    elif re.search(r"why|analyze|architecture|explain|impact|optimize|strategy", cleaned_input, re.I):
+    elif re.search(r"why|analyze|architecture|explain|impact|optimize|strategy|eligible|eligibility|cover|covered", cleaned_input, re.I):
         detected_intent = "ANALYTICAL_SYNTHESIS"
-    elif re.search(r"error|fix|fail|issue|slow|hallucinat|drift|problem", cleaned_input, re.I):
+    elif re.search(r"error|fix|fail|issue|slow|hallucinat|drift|problem|reject|denied|exclusion", cleaned_input, re.I):
         detected_intent = "TROUBLESHOOTING"
     else:
         detected_intent = "FACTUAL_LOOKUP"
 
     extracted_entities = extract_top_keywords(cleaned_input, 8)
+    inferred_domain_terms = _infer_domain_expansion_terms(cleaned_input)
     word_count = len(re.split(r"\s+", cleaned_input))
     complexity = (
         "HIGH"
-        if (word_count > 16 or len(extracted_entities) >= 4)
+        if (word_count > 14 or len(extracted_entities) >= 4 or len(inferred_domain_terms) >= 4)
         else "MEDIUM"
-        if word_count >= 7
+        if word_count >= 6
         else "LOW"
     )
 
@@ -527,27 +662,47 @@ def reshape_user_prompt(
             "clarityScoreAfter": 98,
         }
 
-    aligned_terms: List[str] = []
+    aligned_terms: List[str] = list(inferred_domain_terms[:10])
     for ent in extracted_entities:
         if len(ent) < 3:
             continue
         for ckw in corpus_keywords:
             if ckw != ent and len(ckw) >= 3 and (ckw.startswith(ent[:4]) or ent.startswith(ckw[:4])) and ckw not in aligned_terms:
                 aligned_terms.append(ckw)
-    expansion_context = " ".join(aligned_terms[:4])
+    expansion_context = " ".join(aligned_terms[:10])
+
+    history_context = ""
+    if recent_history:
+        prev_prompts = [
+            h.get("promptReshape", {}).get("originalPrompt", "")
+            for h in recent_history[:2]
+            if h.get("promptReshape", {}).get("originalPrompt")
+        ]
+        if prev_prompts:
+            history_context = f"\nRecent Conversation Context: {' | '.join(prev_prompts)}"
 
     llm_system = (
-        "You are a Small LLM Query Reshaping Agent in a RAG system. "
-        "Given a user prompt, output ONLY valid JSON with keys: "
-        '"reshapedPrimaryQuery" (stay strictly on the user\'s topic and entities), '
-        '"stepBackQuery", "subQueries" (array of 3 strings focused on the user\'s question), '
-        '"hydeDocument" (2-sentence direct hypothetical answer focused strictly on the user\'s topic), and "reasoningTrace".'
+        "You are an Expert Domain Query Reshaping Agent in a RAG system. "
+        "Your job is to translate a user's everyday question into the formal terminology, synonyms, exclusions, "
+        "waiting-period clauses, and eligibility rules used in official documents (such as insurance policies, legal contracts, "
+        "medical guidelines, or technical manuals). For example, if a user asks about 'LASIK surgery next month', automatically "
+        "expand to include formal concepts like 'refractive error, dioptres, eye surgery, cosmetic or plastic surgery (Code Excl08 / Excl15), "
+        "day care procedures, initial 30-day waiting period, 2-year specified procedure waiting period, pre-existing disease waiver'. "
+        "Output ONLY valid JSON with keys: "
+        '"reshapedPrimaryQuery" (the user\'s question enriched with formal domain synonyms, exclusion codes, and governing concepts), '
+        '"stepBackQuery" (broader governing rules, eligibility criteria, waiting periods, and exclusions), '
+        '"subQueries" (array of 3 distinct search strings: [1] direct topic & formal synonyms, [2] exclusions, caps, & eligibility conditions, [3] waiting periods, timelines, & claim procedures), '
+        '"hydeDocument" (2-3 sentence hypothetical document clause containing the formal terms, thresholds, waiting periods, and exclusion codes), '
+        'and "reasoningTrace".'
     )
     external_raw = call_external_llm_if_available(
         provider=provider,
         model=model_name,
         system_prompt=llm_system,
-        user_prompt=f'User Prompt: "{cleaned_input}"\nRelated Document Terms: {", ".join(aligned_terms[:10])}',
+        user_prompt=(
+            f'User Prompt: "{cleaned_input}"{history_context}\n'
+            f'Inferred Formal Domain Concepts: {", ".join(aligned_terms[:12])}'
+        ),
         config=config,
     )
 
@@ -556,16 +711,22 @@ def reshape_user_prompt(
             m = re.search(r"\{[\s\S]*\}", external_raw)
             if m:
                 parsed = json.loads(m.group(0))
+                raw_reshaped = str(parsed.get("reshapedPrimaryQuery") or cleaned_input)
+                # Ensure inferred domain terms are included so retrieval never misses formal policy vocabulary
+                combined_reshaped = f"{raw_reshaped} {' '.join(inferred_domain_terms[:6])}".strip()
+                parsed_subs = list(parsed.get("subQueries") or [])
+                if inferred_domain_terms:
+                    parsed_subs.append(" ".join(inferred_domain_terms[:8]))
                 return {
                     "originalPrompt": cleaned_input,
                     "detectedIntent": detected_intent,
                     "complexityLevel": complexity,
-                    "reshapedPrimaryQuery": parsed.get("reshapedPrimaryQuery") or cleaned_input,
-                    "stepBackQuery": parsed.get("stepBackQuery") or f"Core details and clauses regarding {' '.join(extracted_entities)}",
-                    "subQueries": (parsed.get("subQueries") or [cleaned_input])[:4],
-                    "hydeDocument": parsed.get("hydeDocument") or cleaned_input,
-                    "extractedEntities": extracted_entities,
-                    "reasoningTrace": parsed.get("reasoningTrace") or f"Reshaped by {model_name} via {provider}.",
+                    "reshapedPrimaryQuery": combined_reshaped,
+                    "stepBackQuery": parsed.get("stepBackQuery") or f"Governing rules, waiting periods, exclusions, and eligibility for {' '.join(extracted_entities)}",
+                    "subQueries": (parsed_subs or [cleaned_input])[:4],
+                    "hydeDocument": f"{parsed.get('hydeDocument') or cleaned_input} {' '.join(inferred_domain_terms[:6])}".strip(),
+                    "extractedEntities": list(dict.fromkeys(extracted_entities + inferred_domain_terms[:4]))[:10],
+                    "reasoningTrace": parsed.get("reasoningTrace") or f"Expanded domain concepts and synonyms via {model_name} ({provider}).",
                     "modelUsed": model_name,
                     "providerUsed": provider,
                     "latencyMs": max(12, int(round((time.time() - t0) * 1000))),
@@ -575,15 +736,13 @@ def reshape_user_prompt(
         except Exception:
             pass
 
-    # Domain-neutral local query expansion: strictly preserve the user's actual question entities
-    # without injecting any unrelated RAG/HNSW/chunking boilerplate.
     core_subject = " ".join(extracted_entities) if extracted_entities else cleaned_input
     reshaped_primary = f"{cleaned_input} {expansion_context}".strip() if expansion_context else cleaned_input
-    step_back = f"Key rules, definitions, terms, and conditions governing {core_subject}"
+    step_back = f"Governing rules, eligibility criteria, waiting periods, and exclusions for {core_subject}"
     sub_queries = [
-        cleaned_input,
-        f"{core_subject} eligibility, coverage, procedure, and details",
-        f"{core_subject} clauses, terms, requirements, and exceptions {expansion_context}".strip(),
+        f"{cleaned_input} {' '.join(inferred_domain_terms[:4])}".strip(),
+        f"{core_subject} exclusions, not covered, eligibility conditions, thresholds {' '.join(inferred_domain_terms[4:8])}".strip(),
+        f"{core_subject} waiting period, 30 days, 24 months, pre-existing disease, claims procedure".strip(),
     ]
     hyde_doc = f"{cleaned_input} {core_subject} {expansion_context}".strip()
 
@@ -729,6 +888,7 @@ def synthesize_answer_and_verify(
     config: Dict[str, Any],
     timings: Dict[str, int],
     user_documents: Optional[List[Dict[str, Any]]] = None,
+    recent_history: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     t_gen = time.time()
     original_prompt = prompt_reshape["originalPrompt"]
@@ -781,11 +941,27 @@ def synthesize_answer_and_verify(
                 "relevanceScore": ch["rerankScore"],
             })
 
-        context_block = "\n\n---\n\n".join(
-            f"[Source {idx + 1}: {ch['documentTitle']} | Section: {ch['sectionPath']} | Rerank Score: {ch['rerankScore'] * 100:.1f}%]\n"
-            f"{ch['content']}"
-            for idx, ch in enumerate(retrieved_chunks)
-        )
+        context_entries: List[str] = []
+        for idx, ch in enumerate(retrieved_chunks):
+            entry = (
+                f"[Source {idx + 1}: {ch['documentTitle']} | Section: {ch['sectionPath']} | Rerank Score: {ch['rerankScore'] * 100:.1f}%]\n"
+                f"{ch['content']}"
+            )
+            if ch.get("parentContext"):
+                entry += f"\n(Adjacent / Extended Section Context): {ch['parentContext']}"
+            context_entries.append(entry)
+        context_block = "\n\n---\n\n".join(context_entries)
+
+        history_block = ""
+        if recent_history:
+            turns_text: List[str] = []
+            for h in reversed(recent_history[:3]):
+                q_prev = h.get("promptReshape", {}).get("originalPrompt", "")
+                a_prev = (h.get("answer") or "")[:320]
+                if q_prev:
+                    turns_text.append(f"User: {q_prev}\nAssistant: {a_prev}")
+            if turns_text:
+                history_block = "Recent Conversation History:\n" + "\n---\n".join(turns_text) + "\n\n"
 
         gen_provider = config.get("generatorProvider", "builtin_local")
         gen_model = config.get("generatorModel", "Llama-3.1-8B-Instruct-Q4_K_M")
@@ -794,13 +970,28 @@ def synthesize_answer_and_verify(
             provider=gen_provider,
             model=gen_model,
             system_prompt=(
-                "You are RAG_BUDDY, a helpful and precise RAG assistant. "
-                "Directly answer the user's question first in clear, natural language using ONLY the relevant Retrieved Context Sources. "
-                "Ignore any context sources that are unrelated to the user's question. "
-                "Cite every factual claim inline using [Source X] notation. Never use emojis."
+                "You are RAG_BUDDY, an intelligent, proactive, and deeply explanatory Domain & Document Analyst. "
+                "Your goal is to give the user a complete, smart, well-reasoned answer on their VERY FIRST question "
+                "so they never have to spoon-feed you extra hints or domain context.\n\n"
+                "Follow these 4 rules strictly:\n"
+                "1. **Direct Verdict & Summary First**: Open with a clear, direct answer to the user's question.\n"
+                "2. **Smart Domain Reasoning (Bridge Everyday Terms to Formal Clauses)**: If the user asks about a term "
+                "(e.g., 'LASIK surgery next month', a specific illness, or a scenario) that is not printed word-for-word in the document, "
+                "NEVER just say 'it is not mentioned' and stop. Instead, proactively connect their question to the governing clauses in the Retrieved Context "
+                "(for example: how Refractive Error / Eye Surgery thresholds, Cosmetic or Plastic Surgery exclusions like Code Excl08, "
+                "Day Care coverages, Pre-Existing Disease / Specified Procedure waiting periods like 30-day or 2-year rules, or Group Policy waiting-period waivers apply).\n"
+                "3. **Structured, Explanatory Breakdown**: Organize your explanation clearly with bold subheadings or bullet points covering:\n"
+                "   - **Eligibility / Coverage Verdict**\n"
+                "   - **Governing Policy Clauses & Exclusions Found in Your Document** (quote or explain exact clause numbers, exclusion codes, sub-limits, and waiting periods)\n"
+                "   - **Timeline / Waiting Period Impact** (if the user asked about 'next month', 'immediately', etc.)\n"
+                "   - **Actionable Next Steps** (what to verify in their Schedule or how to file Cashless Pre-Authorization / Reimbursement based on the document)\n"
+                "4. **Inline Citations & Clean Formatting**: Cite every document fact inline using `[Source X]` notation. "
+                "Ignore unrelated sources. Never use emojis."
             ),
             user_prompt=(
-                f"User Question: {original_prompt}\n\n"
+                f"{history_block}"
+                f"Current User Question: {original_prompt}\n"
+                f"Inferred Domain Query Focus: {prompt_reshape['reshapedPrimaryQuery']}\n\n"
                 f"Retrieved Context Sources:\n{context_block}"
             ),
             config=config,
