@@ -909,7 +909,11 @@ export const App: React.FC = () => {
         </aside>
 
         {/* Main Dedicated Page Stage */}
-        <div className="page-stage">
+        <div
+          className={`page-stage ${
+            activePage === 'chat' ? 'chat-stage-locked' : ''
+          }`}
+        >
           <header className="page-header-banner">
             <div>
               <div
@@ -990,6 +994,7 @@ export const App: React.FC = () => {
           {config && (
             <motion.main
               key={activePage}
+              className={activePage === 'chat' ? 'chat-main-flex' : undefined}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.14, ease: 'easeOut' }}
@@ -1002,6 +1007,11 @@ export const App: React.FC = () => {
                     onExecuteQuery={handleExecuteQuery}
                     onUpdateConfig={handleUpdateConfig}
                     onUploadFiles={handleUploadFiles}
+                    onClearHistory={async () => {
+                      await authFetch('/api/query/history', { method: 'DELETE' });
+                      setQueryHistory([]);
+                      setLatestQuery(null);
+                    }}
                     onSaveFindingFromChat={async (turn) => {
                       await handleSaveFinding({
                         queryId: turn.queryId,

@@ -699,6 +699,10 @@ class PersistentRAGDatabase:
             ).fetchall()
             return [json.loads(r["full_response_json"]) for r in rows]
 
+    def clear_query_history(self, user_id: str = "usr_demo_admin"):
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM query_runs WHERE user_id = ?", (user_id,))
+
     def save_finding(self, payload: Dict[str, Any], user_id: str = "usr_demo_admin") -> Dict[str, Any]:
         finding_id = payload.get("findingId") or f"fnd_{int(time.time() * 1000)}_{random.randint(100, 999)}"
         created_at = datetime.now(timezone.utc).isoformat()

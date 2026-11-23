@@ -40,6 +40,7 @@ interface ChatHomePageProps {
   ) => Promise<void>;
   onSaveFindingFromChat: (turn: AgenticRagResponse) => Promise<void>;
   onOpenModelsPage: () => void;
+  onClearHistory?: () => Promise<void>;
 }
 
 const STARTER_PROMPTS = [
@@ -70,6 +71,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
   onUploadFiles,
   onSaveFindingFromChat,
   onOpenModelsPage,
+  onClearHistory,
 }) => {
   const [promptInput, setPromptInput] = useState<string>('');
   const [expandedTraceIds, setExpandedTraceIds] = useState<Record<string, boolean>>({});
@@ -82,6 +84,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Order history chronologically (oldest -> newest) like ChatGPT / Gemini
   const visibleTurns = [...queryHistory]
@@ -89,7 +92,10 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
     .reverse();
 
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    const el = chatScrollRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
   }, [visibleTurns.length, isExecuting]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
@@ -127,25 +133,18 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
   };
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 20,
-        minHeight: 'calc(100vh - 210px)',
-        justifyContent: 'space-between',
-      }}
-    >
+    <div className="chat-page-shell">
       {/* Top Bar: Active Model Switch Pill & New Chat Session Button */}
       <div
         className="clay-card"
         style={{
-          padding: '14px 22px',
+          padding: '12px 20px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           flexWrap: 'wrap',
           gap: 12,
+          flexShrink: 0,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -181,7 +180,12 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
             type="button"
             className="clay-btn"
             style={{ padding: '7px 14px', fontSize: '0.76rem' }}
-            onClick={() => setClearedAfterTimestamp(Date.now())}
+            onClick={async () => {
+              setClearedAfterTimestamp(Date.now());
+              if (onClearHistory) {
+                await onClearHistory();
+              }
+            }}
           >
             <RotateCcw size={13} />
             <span>NEW CHAT VIEW</span>
@@ -189,15 +193,8 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
         </div>
       </div>
 
-      {/* Center Conversational Chat Thread */}
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 24,
-          flex: 1,
-        }}
-      >
+      {/* Center Conversational Chat Thread (Dedicated Independent Scroll Viewport) */}
+      <div ref={chatScrollRef} className="chat-thread-scroll">
         {visibleTurns.length === 0 && !isExecuting ? (
           /* Empty Chat Starter Grid (Like ChatGPT / Gemini Home Screen) */
           <div
@@ -733,10 +730,8 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
       <div
         className="clay-card liquid-capsule-dock"
         style={{
-          padding: '18px 24px',
-          position: 'sticky',
-          bottom: 16,
-          zIndex: 10,
+          padding: '16px 22px',
+          flexShrink: 0,
         }}
       >
         <input

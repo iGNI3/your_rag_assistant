@@ -739,7 +739,7 @@ def synthesize_answer_and_verify(
         custom_docs = [
             d for d in docs
             if not any(
-                s in d.get("id", "")
+                s in str(d.get("id", "")).lower() or s in str(d.get("title", "")).lower()
                 for s in (
                     "doc_hnsw_architecture",
                     "doc_chunking_optimization",
@@ -748,6 +748,9 @@ def synthesize_answer_and_verify(
                     "seed_01",
                     "seed_02",
                     "seed_03",
+                    "hnsw vector indexing & hybrid rrf",
+                    "adaptive chunking strategy benchmark",
+                    "small llm prompt reshaping, crag & multimodal ocr",
                 )
             )
         ]

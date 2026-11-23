@@ -364,21 +364,24 @@ class HybridVectorDatabase:
 
         # If the user has uploaded their own custom documents, prioritize them and exclude
         # the 3 starter RAG demo whitepapers unless the prompt explicitly asks about RAG internals.
-        def _is_starter_seed_doc(doc_id: str) -> bool:
-            return any(
-                s in doc_id
-                for s in (
-                    "doc_hnsw_architecture",
-                    "doc_chunking_optimization",
-                    "doc_agentic_reshaper_ocr",
-                    "doc_small_llm_crag_ocr",
-                    "seed_01",
-                    "seed_02",
-                    "seed_03",
-                )
+        def _is_starter_seed_chunk(chunk_obj: Dict[str, Any]) -> bool:
+            did = str(chunk_obj.get("documentId") or "").lower()
+            dtitle = str(chunk_obj.get("documentTitle") or "").lower()
+            seed_markers = (
+                "doc_hnsw_architecture",
+                "doc_chunking_optimization",
+                "doc_agentic_reshaper_ocr",
+                "doc_small_llm_crag_ocr",
+                "seed_01",
+                "seed_02",
+                "seed_03",
+                "hnsw vector indexing & hybrid rrf",
+                "adaptive chunking strategy benchmark",
+                "small llm prompt reshaping, crag & multimodal ocr",
             )
+            return any(m in did or m in dtitle for m in seed_markers)
 
-        custom_chunks = [c for c in raw_all_chunks if not _is_starter_seed_doc(c["documentId"])]
+        custom_chunks = [c for c in raw_all_chunks if not _is_starter_seed_chunk(c)]
         rag_internal_pattern = r"\b(hnsw|bm25|rrf|reciprocal rank|hyde|crag|cross-encoder|chunking strategy|semantic inflection|sliding window)\b"
         asks_about_rag_internals = bool(re.search(rag_internal_pattern, original_prompt, flags=re.IGNORECASE))
 

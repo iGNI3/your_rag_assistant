@@ -136,21 +136,24 @@ def execute_rag_pipeline(prompt: str, config_used: Dict[str, Any], user_id: str)
     all_chunks = vector_db.get_all_chunks(user_id)
     user_docs = vector_db.get_all_documents(user_id)
 
-    def _is_seed(doc_id: str) -> bool:
-        return any(
-            s in doc_id
-            for s in (
-                "doc_hnsw_architecture",
-                "doc_chunking_optimization",
-                "doc_agentic_reshaper_ocr",
-                "doc_small_llm_crag_ocr",
-                "seed_01",
-                "seed_02",
-                "seed_03",
-            )
+    def _is_seed_chunk(c: Dict[str, Any]) -> bool:
+        did = str(c.get("documentId") or "").lower()
+        dtitle = str(c.get("documentTitle") or "").lower()
+        markers = (
+            "doc_hnsw_architecture",
+            "doc_chunking_optimization",
+            "doc_agentic_reshaper_ocr",
+            "doc_small_llm_crag_ocr",
+            "seed_01",
+            "seed_02",
+            "seed_03",
+            "hnsw vector indexing & hybrid rrf",
+            "adaptive chunking strategy benchmark",
+            "small llm prompt reshaping, crag & multimodal ocr",
         )
+        return any(m in did or m in dtitle for m in markers)
 
-    custom_chunks = [c for c in all_chunks if not _is_seed(c["documentId"])]
+    custom_chunks = [c for c in all_chunks if not _is_seed_chunk(c)]
     active_pool = custom_chunks if custom_chunks else all_chunks
 
     corpus_keywords: List[str] = []
@@ -559,6 +562,14 @@ def query_rag():
 
     resp_obj = execute_rag_pipeline(prompt, merged_config, user_id=user_id)
     return jsonify(resp_obj)
+
+
+@app.route("/api/query/history", methods=["DELETE"])
+@require_auth
+def clear_chat_history():
+    user_id = g.current_user["userId"]
+    sql_db.clear_query_history(user_id)
+    return jsonify({"success": True})
 
 
 @app.route("/api/findings", methods=["GET"])
