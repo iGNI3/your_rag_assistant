@@ -136,6 +136,42 @@ function renderInlineTokens(
 
 function normalizeContentForTables(rawContent: string): string {
   let t = rawContent.replace(/\r\n/g, '\n');
+  t = t.replace(
+    /Sl\.[\s\n]+No\.[\s\n]+Title[\s\n]+Description[^\n]*/gi,
+    '\nSl. No. Title Description Policy Clause Number\n'
+  );
+  t = t.replace(
+    /(?:^|\n)\s*1\.[\s\n]+Name of[\s\n]+Insurance[\s\n]+Product\/[\s\n]+Policy[\s\n]+([^\n]+)/gi,
+    '\n1. Name of Insurance Product/ Policy: $1'
+  );
+  t = t.replace(
+    /(?:^|\n)\s*2\.[\s\n]+Policy[\s\n]+Number[\s\n]+([^\n]+)/gi,
+    '\n2. Policy Number: $1'
+  );
+  t = t.replace(
+    /(?:^|\n)\s*3\.[\s\n]+Type of[\s\n]+Insurance[\s\n]+Product\/[\s\n]+Policy[\s\n]+([^\n]+)/gi,
+    '\n3. Type of Insurance Product/ Policy: $1'
+  );
+  t = t.replace(
+    /(?:^|\n)\s*4\.[\s\n]+Sum[\s\n]+Insured[\s\n]+\(Basis\)[\s\n]+([^\n]+)/gi,
+    '\n4. Sum Insured (Basis): $1'
+  );
+  t = t.replace(
+    /(?:^|\n)\s*5\.[\s\n]+Policy[\s\n]+Coverage[\s\n]+\(What the[\s\n]+Policy[\s\n]+Covers\)[\s\n]*/gi,
+    '\n5. Policy Coverage (What the Policy Covers): '
+  );
+  t = t.replace(
+    /(?:^|\n)\s*6\.[\s\n]+Exclusion[\s\n]*s[\s\n]+\(What[\s\n]+the policy[\s\n]+does not[\s\n]+cover\)[\s\n]*/gi,
+    '\n6. Exclusions (What the policy does not cover): '
+  );
+  t = t.replace(
+    /(?:^|\n)\s*7\.[\s\n]+Waitin[\s\n]*g[\s\n]+period[\s\n]*/gi,
+    '\n7. Waiting period: '
+  );
+  t = t.replace(
+    /(?:^|\n)\s*8\.[\s\n]+Financial[\s\n]+Limits of[\s\n]+the[\s\n]+Coverag[\s\n]*e[\s\n]*/gi,
+    '\n8. Financial Limits of the Coverage: '
+  );
   // Break inline PDF CIS table headers & numbered rows onto separate lines if present in quoted evidence
   t = t.replace(/([.!?])\s+(Sl\.\s*No\.\s+Title\s+Description)/gi, '$1\n$2');
   t = t.replace(/(Policy Clause Number)\s+(?=\d{1,2}\.\s)/gi, '$1\n');

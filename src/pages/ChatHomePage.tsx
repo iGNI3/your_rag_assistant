@@ -1122,10 +1122,137 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
             return sectionPath === docTitle ? '' : sectionPath;
           };
 
-          // Restores original document line breaks, numbered rows, clauses, and headings
-          // even when a PDF extractor or chunker placed multiple table rows/clauses on one line
+          // Restores original document line breaks, unwraps multi-line vertical PDF table cell labels,
+          // and formats numbered rows, clauses, and headings
           const restoreDocumentStructure = (raw: string): string => {
             let t = raw.replace(/\r\n/g, '\n');
+
+            // 1. Unwrap vertical multi-line broken CIS / Schedule cell titles from pypdf
+            t = t.replace(
+              /Sl\.[\s\n]+No\.[\s\n]+Title[\s\n]+Description[^\n]*/gi,
+              '\nSl. No. Title Description Policy Clause Number\n'
+            );
+            t = t.replace(
+              /(?:^|\n)\s*1\.[\s\n]+Name of[\s\n]+Insurance[\s\n]+Product\/[\s\n]+Policy[\s\n]+([^\n]+)/gi,
+              '\n1. Name of Insurance Product/ Policy: $1'
+            );
+            t = t.replace(
+              /(?:^|\n)\s*2\.[\s\n]+Policy[\s\n]+Number[\s\n]+([^\n]+)/gi,
+              '\n2. Policy Number: $1'
+            );
+            t = t.replace(
+              /(?:^|\n)\s*3\.[\s\n]+Type of[\s\n]+Insurance[\s\n]+Product\/[\s\n]+Policy[\s\n]+([^\n]+)/gi,
+              '\n3. Type of Insurance Product/ Policy: $1'
+            );
+            t = t.replace(
+              /(?:^|\n)\s*4\.[\s\n]+Sum[\s\n]+Insured[\s\n]+\(Basis\)[\s\n]+([^\n]+)/gi,
+              '\n4. Sum Insured (Basis): $1'
+            );
+            t = t.replace(
+              /(?:^|\n)\s*5\.[\s\n]+Policy[\s\n]+Coverage[\s\n]+\(What the[\s\n]+Policy[\s\n]+Covers\)[\s\n]*/gi,
+              '\n5. Policy Coverage (What the Policy Covers): '
+            );
+            t = t.replace(
+              /(?:^|\n)\s*6\.[\s\n]+Exclusion[\s\n]*s[\s\n]+\(What[\s\n]+the policy[\s\n]+does not[\s\n]+cover\)[\s\n]*/gi,
+              '\n6. Exclusions (What the policy does not cover): '
+            );
+            t = t.replace(
+              /(?:^|\n)\s*7\.[\s\n]+Waitin[\s\n]*g[\s\n]+period[\s\n]*/gi,
+              '\n7. Waiting period: '
+            );
+            t = t.replace(
+              /(?:^|\n)\s*8\.[\s\n]+Financial[\s\n]+Limits of[\s\n]+the[\s\n]+Coverag[\s\n]*e[\s\n]*/gi,
+              '\n8. Financial Limits of the Coverage: '
+            );
+            t = t.replace(
+              /(?:^|\n)\s*9\.[\s\n]+Claims\/[\s\n]+Claims[\s\n]+Procedure[\s\n]*/gi,
+              '\n9. Claims/ Claims Procedure: '
+            );
+            t = t.replace(
+              /(?:^|\n)\s*10\.[\s\n]+Policy[\s\n]+Servicing[\s\n]*/gi,
+              '\n10. Policy Servicing: '
+            );
+            t = t.replace(
+              /(?:^|\n)\s*11\.[\s\n]+Grievances\/[\s\n]+Complaints[\s\n]*/gi,
+              '\n11. Grievances/ Complaints: '
+            );
+            t = t.replace(
+              /(?:^|\n)\s*12\.[\s\n]+Things to[\s\n]+remember[\s\n]*/gi,
+              '\n12. Things to remember: '
+            );
+            t = t.replace(
+              /(?:^|\n)\s*13\.[\s\n]+Your Obligations[\s\n]+/gi,
+              '\n13. Your Obligations: '
+            );
+
+            // 2. Unwrap vertical multi-line broken Schedule of Benefits / Policyholder table labels (Pages 1, 9, 10)
+            t = t.replace(
+              /No of Primary Insured Persons[\s\n]+covered[\s\n]+(\d+)/gi,
+              'No of Primary Insured Persons covered: $1'
+            );
+            t = t.replace(
+              /Total No of Insured Persons[\s\n]+Covered[\s\n]+(\d+)/gi,
+              'Total No of Insured Persons Covered: $1'
+            );
+            t = t.replace(
+              /Address[\s\n]+(49A[^\n]+)[\s\n]+(NORTH WEST[^\n]+)[\s\n]+(City:[^\n]+)[\s\n]+(Pin-code:[^\n]+)/gi,
+              'Address: $1, $2, $3, $4'
+            );
+            t = t.replace(
+              /Intermediary Name\s+(.+?)\s+Intermediary Code\s+(\S+)/gi,
+              'Intermediary Name: $1\nIntermediary Code: $2'
+            );
+            t = t.replace(
+              /Master Policy No:\s*(\S+)\s+Servicing Branch Office:\s*(.+?)\s+Issue Date:\s*(\S+)/gi,
+              'Master Policy No: $1\nServicing Branch Office: $2\nIssue Date: $3'
+            );
+
+            t = t.replace(
+              /Alternative Treatment Inpatient[\s\n]+expenses[\s\n]+(AYUSH[^\n]+(?:[\s\n]+(?:and subject|government and|Health)[^\n]*)*)/gi,
+              (_m, p1) =>
+                `Alternative Treatment Inpatient expenses: ${String(p1).replace(
+                  /\s*\n\s*/g,
+                  ' '
+                )}`
+            );
+            t = t.replace(
+              /Pre-hospitalization Medical[\s\n]+expenses[\s\n]+(Covered[^\n]+)/gi,
+              'Pre-hospitalization Medical expenses: $1'
+            );
+            t = t.replace(
+              /Post-hospitalization Medical[\s\n]+expenses[\s\n]+(Covered[^\n]+)/gi,
+              'Post-hospitalization Medical expenses: $1'
+            );
+            t = t.replace(
+              /Room Rent Capping[\s\n]+(No Room rent[^\n]+)/gi,
+              'Room Rent Capping: $1'
+            );
+            t = t.replace(
+              /Waiting period for Pre-\s*Existing[\s\n]+Diseases \(PED\)[\s\n]+(Pre-\s*Existing[^\n]+)/gi,
+              'Waiting period for Pre-Existing Diseases (PED): $1'
+            );
+            t = t.replace(
+              /Wellness\/Health check up\/OPD[\s\n]+Discount[\s\n]+(Not Applicable[^\n]*)/gi,
+              'Wellness/Health check up/OPD Discount: $1'
+            );
+            t = t.replace(
+              /Dieasewise capping \(Per[\s\n]+incidence limit\)[\s\n]+(Not Applicable[^\n]*)/gi,
+              'Diseasewise capping (Per incidence limit): $1'
+            );
+            t = t.replace(
+              /New Born Baby Cover from Day[\s\n]+1[\s\n]+(Baby not covered[^\n]*)/gi,
+              'New Born Baby Cover from Day 1: $1'
+            );
+            t = t.replace(
+              /Infertility Cover and Surrogacy[\s\n]+Cover[\s\n]+(Not Covered[^\n]*)/gi,
+              'Infertility Cover and Surrogacy Cover: $1'
+            );
+            t = t.replace(
+              /L\.\s*Stem Cell Therapy:([^\n]+)\n(conditions to be covered\.)/gi,
+              'L. Stem Cell Therapy:$1 $2'
+            );
+
+            // 3. Also handle flattened single-line text (if reconstructed from chunks)
             t = t.replace(/\s*\*{3,}\s*/g, '\n\n***\n\n');
             t = t.replace(/([A-Z0-9]{6,})\s+(Tollfree\s*:)/g, '$1\n$2');
             t = t.replace(
@@ -1140,12 +1267,10 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
             t = t.replace(/(Policy Clause Number)\s+(?=\d)/g, '$1\n');
             t = t.replace(/\s+("?Following are covered)/g, '\n$1');
             t = t.replace(/\s+(Section\s+[A-Z]\s*[-–:])/g, '\n\n$1');
-            // Numbered clauses / rows (e.g. "1. Name...", "2. Policy...", "1. Inpatient...", '"1. Initial Waiting Period...')
             t = t.replace(
               /([A-Za-z0-9)"'\]%])\s+"?((?:[1-9]|1\d|2[0-5])\.\s+[A-Z"(])/g,
               '$1\n$2'
             );
-            // Numbered sub-items without dot after "Cover" or sentence end (e.g. "1 Modification...", "2 Modification...")
             t = t.replace(
               /(Cover|[.!?])\s+([1-9]\s+(?:Modification|Emergency|Air|External|Inpatient|Organ|Day|Pre-|Post-|Modern|Initial|Specified|Domiciliary|Maternity|Ambulance|Ayush|Bariatric)[A-Za-z\s])/g,
               '$1\n$2'
@@ -1154,7 +1279,6 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
               /([A-Za-z]{3,})\s+([2-9]\s+(?:Modification|Emergency|Air|External|Inpatient|Organ|Day|Pre-|Post-|Modern|Initial|Specified|Domiciliary|Maternity|Ambulance|Ayush|Bariatric)[A-Za-z\s])/g,
               '$1\n$2'
             );
-            // Lettered sub-clauses (e.g. "a. For Cashless Service...", "b. For Reimbursement...")
             t = t.replace(
               /([.!?)"']|\bProcedure|\bhospital)\s+([a-f]\.\s+[A-Z])/g,
               '$1\n$2'
@@ -1200,14 +1324,21 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                 rows: ParsedTableRow[];
               };
 
+          const SCHEDULE_KEY_VALUE_REGEX =
+            /^(Master Policy No|Servicing Branch Office|Issue Date|Customer ID|Policy Number|Servicing Branch Address|Intermediary Name|Intermediary Code|Contact Details|Name of Policyholder|Address|Administrator\s*\/\s*TPA Name|Coinsurance applicable|PAN No|GSTN No|Email|Previous Policy No|Period of Insurance|No of Primary Insured Persons covered|Total No of Insured Persons Covered|Total Sum Insured|Net Premium|CGST|SGST|IGST|Final Premium\s*\(inclusive of taxes\)|Toll-Free number|Website|Fax No|SMS|Modern Treatments|Alternative Treatment Inpatient expenses|Day Care Treatment|Pre-hospitalization Medical expenses|Post-hospitalization Medical expenses|Room Rent Capping|Organ Donor Cover|Waiting period for Pre-?\s*Existing Diseases\s*\(PED\)|Initial Waiting Period\s*-\s*30 days|Disesase Specific Waiting Period|Disease Specific Waiting Period|Family Definition|Min and Max Entry Age\s*-\s*Adult|Min and Max Entry Age\s*-\s*Child|Scope of Cover|Base Sum Insured|Sum Insured Basis|Hospitlization related to terrorism|Hospitalization related to terrorism|Cochlear Implant|External Congenital Diseases|Emergency Ground Ambulance|Wellness\/Health check up\/OPD Discount|Treatment for Refractive Error|Air Ambulance|No deductions in case of death|Diseasewise capping\s*\(Per incidence limit\)|Dieasewise capping\s*\(Per incidence limit\)|Co-payment|Corporate Floater|Internal Congenital Diseases|Maternity Expenses|New Born Baby Cover from Day 1|Infertility Cover and Surrogacy Cover|Domiciliary Hospitalization|Group to Retail portability clause)\s*:?\s*(.*)$/i;
+
           const parseStructuredTableRow = (
             trimmed: string
-          ): { cells: string[]; headersHint: string[] } | null => {
+          ): {
+            cells: string[];
+            headersHint: string[];
+            allowMultilineContinuation?: boolean;
+          } | null => {
             if (!trimmed) return null;
 
-            // 1. CIS / Policy Schedule Known Field Rows (e.g. "1. Name of Insurance Product/ Policy Group Mediclaim Policy")
+            // 1. CIS / Policy Schedule Known Field Rows (e.g. "1. Name of Insurance Product/ Policy: Group Mediclaim Policy")
             const cisMatch = trimmed.match(
-              /^["']?(\d{1,2})\.\s+(Name of Insurance Product\/\s*Policy|Policy Number|Type of Insurance Product\/\s*Policy|Sum Insured\s*\(Basis\)|Policy Coverage\s*\(What the Policy Covers\)|Policy Coverage|Exclusions\s*\(what the policy does not cover\)|Waitin\s*g\s*period|Waiting\s*period|Financial Limits of the\s*Coverag\s*e|Financial Limits of the\s*Coverage|Claims\/\s*Claims Procedure|Policy Servicing|Grievances\/\s*Complaints|Things to remember|Your Obligations)\s*(.*)$/i
+              /^["']?(\d{1,2})\.\s+(Name of Insurance Product\/\s*Policy|Policy Number|Type of Insurance Product\/\s*Policy|Sum Insured\s*\(Basis\)|Policy Coverage\s*\(What the Policy Covers\)|Policy Coverage|Exclusions\s*\(what the policy does not cover\)|Waitin\s*g\s*period|Waiting\s*period|Financial Limits of the\s*Coverag\s*e|Financial Limits of the\s*Coverage|Claims\/\s*Claims Procedure|Policy Servicing|Grievances\/\s*Complaints|Things to remember|Your Obligations)\s*:?\s*(.*)$/i
             );
             if (cisMatch) {
               const num = `${cisMatch[1]}.`;
@@ -1222,13 +1353,63 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                   'Policy Clause / Title',
                   'Description & Coverage Details',
                 ],
+                allowMultilineContinuation: false,
               };
             }
 
-            // 2. Numbered or Lettered Colon-Separated Clause / Exclusion / Waiting Period Rows
-            // e.g. "1. Investigation & Evaluation: (Code Excl04)", "1. Initial Waiting Period: Not applicable", "a. For Cashless Service: ..."
+            // 2. Co-Insurance 6-Column Numeric Table Rows
+            const coinsRow = trimmed.match(
+              /^(\d+|Total)\s+(?:([A-Za-z0-9.\-\s]+?)\s+)?(\d+\.\d{2})\s+(\d+\.\d{2})\s+(\d+\.\d{2})\s+(\d+\.\d{2})$/
+            );
+            if (coinsRow) {
+              return {
+                cells: [
+                  coinsRow[1],
+                  (coinsRow[2] || 'Total').trim(),
+                  coinsRow[3],
+                  coinsRow[4],
+                  coinsRow[5],
+                  coinsRow[6],
+                ],
+                headersHint: [
+                  'Sr No',
+                  'Name of the Insurance Company',
+                  'Co-Insurance Share (%)',
+                  'Base Premium (INR)',
+                  'Tax (INR)',
+                  'Final Premium (INR)',
+                ],
+                allowMultilineContinuation: false,
+              };
+            }
+
+            // 3. Instalment 5-Column Numeric Table Rows
+            const instRow = trimmed.match(
+              /^(\d+)\s+(\d{2}-\d{2}-\d{4})\s+(\d+\.\d{2})\s+(\d+\.\d{2})\s+(\d+\.\d{2})$/
+            );
+            if (instRow) {
+              return {
+                cells: [
+                  instRow[1],
+                  instRow[2],
+                  instRow[3],
+                  instRow[4],
+                  instRow[5],
+                ],
+                headersHint: [
+                  'Sr No',
+                  'Installment Date',
+                  'Net Premium (INR)',
+                  'Taxes (INR)',
+                  'Total Premium (INR)',
+                ],
+                allowMultilineContinuation: false,
+              };
+            }
+
+            // 4. Numbered, Lettered, or Roman Numeral Colon/Dash-Separated Clause / Exclusion / Waiting Period / TAT Rows
             const colonRowMatch = trimmed.match(
-              /^["']?((?:[1-9]|1\d|2[0-5])\.|[a-f]\.)\s+([^:]{2,85}):\s*(.+)$/
+              /^["']?((?:[1-9]|1\d|2[0-5])\.|[a-f]\.|[ivx]{1,4}\.)\s+([^:–\-]{2,85}?)(?::|\s+-\s+)\s*(.+)$/
             );
             if (colonRowMatch) {
               const num = colonRowMatch[1];
@@ -1239,10 +1420,24 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
               return {
                 cells: [num, clauseTitle, details],
                 headersHint: ['No.', 'Clause / Category', 'Rule / Details'],
+                allowMultilineContinuation: true,
               };
             }
 
-            // 3. Numbered Benefit / Provision Item Rows (e.g. "1. Inpatient care", "1 Modification of Pre-hospitalization...")
+            // 5. Uppercase Lettered List Rows (e.g. "A. Uterine Artery Embolization...", "B. Balloon Sinuplasty")
+            const upperLetterMatch = trimmed.match(/^([A-L])\.\s+(.+)$/);
+            if (upperLetterMatch) {
+              return {
+                cells: [
+                  `${upperLetterMatch[1]}.`,
+                  upperLetterMatch[2].trim(),
+                ],
+                headersHint: ['Code', 'Covered Modern Treatment / Procedure'],
+                allowMultilineContinuation: false,
+              };
+            }
+
+            // 6. Numbered Benefit / Provision Item Rows (e.g. "1. Inpatient care", "1 Modification...", "1. Nursing charges...")
             const numItemMatch = trimmed.match(
               /^["']?(?:((?:[1-9]|1\d|2[0-5])\.)|([1-9])(?=\s+(?:Modification|Emergency|Air|External|Inpatient|Organ|Day|Pre-|Post-|Modern|Initial|Specified|Domiciliary|Maternity|Ambulance|Ayush|Bariatric)\b))\s+(.+)$/
             );
@@ -1254,11 +1449,32 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
               return {
                 cells: [num, itemText],
                 headersHint: ['No.', 'Covered Benefit / Policy Provision'],
+                allowMultilineContinuation: false,
+              };
+            }
+
+            // 7. Schedule of Benefits / Policyholder / Premium / Contact 2-Column Key-Value Rows
+            const kvMatch = trimmed.match(SCHEDULE_KEY_VALUE_REGEX);
+            if (kvMatch) {
+              const field = kvMatch[1].replace(/\s+/g, ' ').trim();
+              const val = kvMatch[2].replace(/^[:\s,]+/, '').trim() || '—';
+              return {
+                cells: [field, val],
+                headersHint: [
+                  'Policy Field / Coverage Head',
+                  'Specification / Limit Applicable',
+                ],
+                allowMultilineContinuation: false,
               };
             }
 
             return null;
           };
+
+          const isStandaloneSectionBoundary = (s: string): boolean =>
+            /^(Sl\.\s*No\.|Sr\s+No|Coverages\s+Coverage Description|Section\s+[A-Z]\s*[-–:]|Note\s*:|Waiting period and exclusions|Scope of Cover|General terms and clauses|Declaration by the Policy Holder|Turn Around Time|List of Modern Treatments|Inpatient care|Other Terms|INTERMEDIARY DETAILS|POLICY HOLDER DETAILS|PREMIUM DETAILS|Co-Insurance Details|INSTALMENT DETAILS|CONTACT DETAILS|FOR HEALTH CLAIM|Stage\s+\d|\*{3,}|•)/i.test(
+              s
+            );
 
           const parsePageIntoBlocks = (body: string): PageContentBlock[] => {
             const offsetLines: OffsetLine[] = [];
@@ -1289,6 +1505,18 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
             let idx = 0;
             while (idx < offsetLines.length) {
               const cur = offsetLines[idx];
+
+              // Skip raw column header lines that immediately precede a parsed structured table
+              if (
+                /^(Sr\s+No\s+Name of the Insurance Company|Sr\s+No\s+Installment Date|Coverages\s+Coverage Description)/i.test(
+                  cur.trimmed
+                ) &&
+                idx + 1 < offsetLines.length &&
+                parseStructuredTableRow(offsetLines[idx + 1].trimmed)
+              ) {
+                idx++;
+                continue;
+              }
 
               // Case 1: Markdown Pipe Table (| Col 1 | Col 2 |)
               if (
@@ -1342,12 +1570,9 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                     continue;
                   }
                   const parsed = parseStructuredTableRow(candidate.trimmed);
-                  if (parsed) {
+                  if (parsed && parsed.headersHint[0] === 'Sl. No.') {
                     tableRows.push({
-                      cells:
-                        parsed.cells.length === 2
-                          ? [parsed.cells[0], parsed.cells[1], '']
-                          : parsed.cells,
+                      cells: [...parsed.cells],
                       start: candidate.start,
                       end: candidate.end,
                     });
@@ -1358,7 +1583,6 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                 }
                 if (tableRows.length >= 1) {
                   flushPara();
-                  // Include header line offset in first row if highlighted
                   tableRows[0].start = Math.min(cur.start, tableRows[0].start);
                   blocks.push({
                     kind: 'table',
@@ -1374,17 +1598,21 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                 }
               }
 
-              // Case 3: Structured Numbered / Colon / CIS Table Rows (2+ consecutive rows or 1 CIS row)
+              // Case 3: Structured Table Rows (CIS, Co-Insurance, Instalment, Exclusions, Waiting Periods, Benefits, Schedule Key-Values)
               const firstParsed = parseStructuredTableRow(cur.trimmed);
               if (firstParsed) {
                 const collected: Array<{
                   cells: string[];
                   headersHint: string[];
+                  allowMultilineContinuation?: boolean;
                   start: number;
                   end: number;
                 }> = [
                   {
-                    ...firstParsed,
+                    cells: [...firstParsed.cells],
+                    headersHint: firstParsed.headersHint,
+                    allowMultilineContinuation:
+                      firstParsed.allowMultilineContinuation,
                     start: cur.start,
                     end: cur.end,
                   },
@@ -1393,28 +1621,63 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                 while (look < offsetLines.length) {
                   const nextLn = offsetLines[look];
                   if (!nextLn.trimmed) {
+                    // Peek ahead 1 line to see if another matching table row continues after a blank line
+                    if (look + 1 < offsetLines.length) {
+                      const afterBlank = parseStructuredTableRow(
+                        offsetLines[look + 1].trimmed
+                      );
+                      if (
+                        afterBlank &&
+                        afterBlank.cells.length === firstParsed.cells.length
+                      ) {
+                        look++;
+                        continue;
+                      }
+                    }
                     break;
                   }
+
                   const nextParsed = parseStructuredTableRow(nextLn.trimmed);
                   if (
                     nextParsed &&
                     nextParsed.cells.length === firstParsed.cells.length
                   ) {
                     collected.push({
-                      ...nextParsed,
+                      cells: [...nextParsed.cells],
+                      headersHint: nextParsed.headersHint,
+                      allowMultilineContinuation:
+                        nextParsed.allowMultilineContinuation,
                       start: nextLn.start,
                       end: nextLn.end,
                     });
                     look++;
-                  } else {
-                    break;
+                    continue;
                   }
+
+                  // Check if nextLn is a wrapped continuation line of the current table row
+                  const prevRow = collected[collected.length - 1];
+                  if (
+                    !nextParsed &&
+                    prevRow.allowMultilineContinuation &&
+                    !isStandaloneSectionBoundary(nextLn.trimmed)
+                  ) {
+                    prevRow.cells[prevRow.cells.length - 1] = `${
+                      prevRow.cells[prevRow.cells.length - 1]
+                    } ${nextLn.trimmed}`.trim();
+                    prevRow.end = nextLn.end;
+                    look++;
+                    continue;
+                  }
+
+                  break;
                 }
 
                 if (
                   collected.length >= 2 ||
                   firstParsed.headersHint[0] === 'Sl. No.' ||
-                  firstParsed.cells.length === 3
+                  firstParsed.headersHint[0] === 'Sr No' ||
+                  firstParsed.cells.length >= 3 ||
+                  firstParsed.headersHint[0] === 'Policy Field / Coverage Head'
                 ) {
                   flushPara();
                   blocks.push({
