@@ -1865,12 +1865,12 @@ table {
 
 .doc-inline-highlight {
   display: inline;
-  background-color: rgba(242, 155, 75, 0.34);
+  background-color: rgba(242, 165, 65, 0.28);
   color: var(--ink-primary);
   font-weight: 600;
-  padding: 3px 8px;
-  border-radius: 8px;
-  box-shadow: 0 0 0 2px var(--clay-terracotta);
+  padding: 2px 4px;
+  border-radius: 4px;
+  box-shadow: none;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }

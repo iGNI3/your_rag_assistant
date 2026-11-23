@@ -1122,39 +1122,248 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
             return sectionPath === docTitle ? '' : sectionPath;
           };
 
-          // Group sequential segments into continuous document pages/sections (no chunk cards!)
-          const groupedDocumentPages: Array<{
-            heading: string;
-            spans: Array<{
-              id: string;
-              cleanText: string;
-            }>;
-          }> = [];
-
-          for (const sec of renderSections) {
-            const cleanHeading = extractCleanHeading(
-              sec.sectionPath,
-              activeRetrievedChunk.documentTitle
+          // Restores original document line breaks, numbered rows, clauses, and headings
+          // even when a PDF extractor or chunker placed multiple table rows/clauses on one line
+          const restoreDocumentStructure = (raw: string): string => {
+            let t = raw.replace(/\r\n/g, '\n');
+            t = t.replace(/\s*\*{3,}\s*/g, '\n\n***\n\n');
+            t = t.replace(/([A-Z0-9]{6,})\s+(Tollfree\s*:)/g, '$1\n$2');
+            t = t.replace(
+              /(\.[a-z]{2,4}(?:\/[^\s]*)?)\s+([A-Z]{3,}(?:\s+[A-Z]{2,})+)/g,
+              '$1\n\n$2'
             );
-            const cleanText = stripSyntheticChunkHeader(sec.content);
-            if (!cleanText) continue;
+            t = t.replace(
+              /(GROUP MEDICLAIM POLICY\s+CUSTOMER INFORMATION SHEET|CUSTOMER INFORMATION SHEET|GROUP MEDICLAIM POLICY)\s+([A-Z][a-z])/g,
+              '$1\n\n$2'
+            );
+            t = t.replace(/([.!?])\s+(Sl\.\s*No\.)/g, '$1\n\n$2');
+            t = t.replace(/(Policy Clause Number)\s+(?=\d)/g, '$1\n');
+            t = t.replace(/\s+("?Following are covered)/g, '\n$1');
+            t = t.replace(/\s+(Section\s+[A-Z]\s*[-–:])/g, '\n\n$1');
+            // Numbered clauses / rows (e.g. "1. Name...", "2. Policy...", "1. Inpatient...")
+            t = t.replace(
+              /([A-Za-z0-9)"'\]%])\s+((?:[1-9]|1\d|2[0-5])\.\s+[A-Z"(])/g,
+              '$1\n$2'
+            );
+            // Numbered sub-items without dot after "Cover" or sentence end (e.g. "1 Modification...", "2 Modification...")
+            t = t.replace(
+              /(Cover|[.!?])\s+([1-9]\s+(?:Modification|Emergency|Air|External|Inpatient|Organ|Day|Pre-|Post-|Modern|Initial|Specified|Domiciliary|Maternity|Ambulance|Ayush|Bariatric)[A-Za-z\s])/g,
+              '$1\n$2'
+            );
+            t = t.replace(
+              /([A-Za-z]{3,})\s+([2-9]\s+(?:Modification|Emergency|Air|External|Inpatient|Organ|Day|Pre-|Post-|Modern|Initial|Specified|Domiciliary|Maternity|Ambulance|Ayush|Bariatric)[A-Za-z\s])/g,
+              '$1\n$2'
+            );
+            // Lettered sub-clauses (e.g. "a. For Cashless Service...", "b. For Reimbursement...")
+            t = t.replace(
+              /([.!?)"']|\bProcedure|\bhospital)\s+([a-f]\.\s+[A-Z])/g,
+              '$1\n$2'
+            );
+            t = t.replace(/([.!?)"'])\s+(Note\s*:)/g, '$1\n\n$2');
+            t = t.replace(
+              /([.!?)"'])\s+(Waiting period and exclusions)/gi,
+              '$1\n\n$2'
+            );
+            t = t.replace(
+              /([.!?)"'])\s+(Financial Limits of the Coverage|Financial Limits of the Coverag\s*e)/gi,
+              '$1\n\n$2'
+            );
+            t = t.replace(/\n{3,}/g, '\n\n');
+            return t.trim();
+          };
 
-            const lastGroup =
-              groupedDocumentPages[groupedDocumentPages.length - 1];
-            if (!lastGroup || lastGroup.heading !== cleanHeading) {
-              groupedDocumentPages.push({
-                heading: cleanHeading,
-                spans: [{ id: sec.id, cleanText }],
+          // Word-token sequence locator that finds the exact [charStart, charEnd] of a cited chunk
+          // inside the formatted original document text while preserving 100% of original newlines
+          const findPassageCharRange = (
+            formattedDocText: string,
+            rawChunkText: string
+          ): [number, number] | null => {
+            const cleanTarget = stripSyntheticChunkHeader(rawChunkText).replace(
+              /\(Context:[^)]+\)/gi,
+              ''
+            );
+            const wordRegex = /[A-Za-z0-9]+/g;
+            const docTokens: Array<{ w: string; start: number; end: number }> = [];
+            let m: RegExpExecArray | null;
+            while ((m = wordRegex.exec(formattedDocText)) !== null) {
+              docTokens.push({
+                w: m[0].toLowerCase(),
+                start: m.index,
+                end: m.index + m[0].length,
               });
-            } else {
-              lastGroup.spans.push({ id: sec.id, cleanText });
             }
-          }
+            const targetWords = (cleanTarget.match(/[A-Za-z0-9]+/g) || []).map((w) =>
+              w.toLowerCase()
+            );
+            if (docTokens.length === 0 || targetWords.length === 0) return null;
+
+            const firstWord = targetWords[0];
+            const secondWord = targetWords[1];
+            let bestStartIdx = -1;
+            let bestEndIdx = -1;
+            let bestScore = 0;
+
+            for (let i = 0; i < docTokens.length; i++) {
+              if (
+                docTokens[i].w !== firstWord &&
+                (!secondWord || docTokens[i].w !== secondWord)
+              ) {
+                continue;
+              }
+              let matchedCount = 0;
+              let lastMatchedDocIdx = i;
+              let tCursor = docTokens[i].w === firstWord ? 0 : 1;
+              const maxScan = Math.min(
+                docTokens.length,
+                i + targetWords.length + 14
+              );
+
+              for (
+                let dIdx = i;
+                dIdx < maxScan && tCursor < targetWords.length;
+                dIdx++
+              ) {
+                if (docTokens[dIdx].w === targetWords[tCursor]) {
+                  matchedCount++;
+                  lastMatchedDocIdx = dIdx;
+                  tCursor++;
+                } else if (
+                  tCursor + 1 < targetWords.length &&
+                  docTokens[dIdx].w === targetWords[tCursor + 1]
+                ) {
+                  matchedCount++;
+                  lastMatchedDocIdx = dIdx;
+                  tCursor += 2;
+                }
+              }
+
+              const score = matchedCount / targetWords.length;
+              if (score > bestScore) {
+                bestScore = score;
+                bestStartIdx = i;
+                bestEndIdx = lastMatchedDocIdx;
+                if (score >= 0.96) break;
+              }
+            }
+
+            if (bestStartIdx < 0 || bestScore < 0.45) return null;
+            const charStart = docTokens[bestStartIdx].start;
+            let charEnd = docTokens[bestEndIdx].end;
+            while (
+              charEnd < formattedDocText.length &&
+              /[.)"'\];:,]/.test(formattedDocText[charEnd])
+            ) {
+              charEnd++;
+            }
+            return [charStart, charEnd];
+          };
 
           const activeCleanHeading = extractCleanHeading(
             activeRetrievedChunk.sectionPath,
             activeRetrievedChunk.documentTitle
           );
+
+          // Build pages directly from matchedDoc.cleanedText || matchedDoc.rawText (preserving original newlines!)
+          // with fallback to sequential chunks if matchedDoc is unavailable
+          const fullOriginalText =
+            matchedDoc?.cleanedText || matchedDoc?.rawText || '';
+
+          const parsedOriginalPages: Array<{
+            heading: string;
+            formattedBody: string;
+          }> = [];
+
+          if (fullOriginalText.trim().length > 0) {
+            const lines = fullOriginalText.replace(/\r\n/g, '\n').split('\n');
+            let currentHeading = '';
+            let currentLines: string[] = [];
+
+            const flushPage = () => {
+              const rawJoined = currentLines.join('\n').trim();
+              if (rawJoined) {
+                parsedOriginalPages.push({
+                  heading: currentHeading,
+                  formattedBody: restoreDocumentStructure(rawJoined),
+                });
+              }
+              currentLines = [];
+            };
+
+            for (const line of lines) {
+              const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+              if (headingMatch) {
+                flushPage();
+                const hText = headingMatch[2].trim();
+                currentHeading =
+                  hText === activeRetrievedChunk.documentTitle ? '' : hText;
+              } else {
+                currentLines.push(line);
+              }
+            }
+            flushPage();
+          }
+
+          if (parsedOriginalPages.length === 0) {
+            for (const sec of renderSections) {
+              const cleanHeading = extractCleanHeading(
+                sec.sectionPath,
+                activeRetrievedChunk.documentTitle
+              );
+              const cleanText = stripSyntheticChunkHeader(sec.content);
+              if (!cleanText) continue;
+              const last = parsedOriginalPages[parsedOriginalPages.length - 1];
+              if (!last || last.heading !== cleanHeading) {
+                parsedOriginalPages.push({
+                  heading: cleanHeading,
+                  formattedBody: restoreDocumentStructure(cleanText),
+                });
+              } else {
+                last.formattedBody = restoreDocumentStructure(
+                  `${last.formattedBody}\n${cleanText}`
+                );
+              }
+            }
+          }
+
+          // Locate which page contains the highlighted passage and its exact [charStart, charEnd]
+          let matchedPageIdx = -1;
+          let matchedCharRange: [number, number] | null = null;
+
+          // First try the page matching activeCleanHeading
+          for (let pIdx = 0; pIdx < parsedOriginalPages.length; pIdx++) {
+            const pg = parsedOriginalPages[pIdx];
+            if (
+              activeCleanHeading &&
+              (pg.heading === activeCleanHeading ||
+                activeCleanHeading.includes(pg.heading) ||
+                pg.heading.includes(activeCleanHeading))
+            ) {
+              const range = findPassageCharRange(
+                pg.formattedBody,
+                activeRetrievedChunk.content
+              );
+              if (range) {
+                matchedPageIdx = pIdx;
+                matchedCharRange = range;
+                break;
+              }
+            }
+          }
+
+          // Fallback: scan all pages in the document
+          if (!matchedCharRange) {
+            for (let pIdx = 0; pIdx < parsedOriginalPages.length; pIdx++) {
+              const range = findPassageCharRange(
+                parsedOriginalPages[pIdx].formattedBody,
+                activeRetrievedChunk.content
+              );
+              if (range) {
+                matchedPageIdx = pIdx;
+                matchedCharRange = range;
+                break;
+              }
+            }
+          }
 
           return (
             <div
@@ -1339,77 +1548,49 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                   }}
                 >
                   <article className="full-document-sheet">
-                    {groupedDocumentPages.map((pageGroup, gIdx) => (
-                      <section
-                        key={`${pageGroup.heading}-${gIdx}`}
-                        className="full-document-page-section"
-                      >
-                        {pageGroup.heading && (
-                          <div className="full-document-section-heading">
-                            <span>{pageGroup.heading}</span>
-                          </div>
-                        )}
+                    {parsedOriginalPages.map((pageGroup, gIdx) => {
+                      const isTargetPage =
+                        gIdx === matchedPageIdx && matchedCharRange !== null;
+                      const body = pageGroup.formattedBody;
 
-                        <div className="full-document-continuous-prose">
-                          {pageGroup.spans.map((sp, spIdx) => {
-                            const isHighlighted =
-                              sp.id === activeRetrievedChunk.chunkId;
-                            const alsoCitedIdx = turn.citations.findIndex(
-                              (c) => c.chunkId === sp.id
-                            );
+                      return (
+                        <section
+                          key={`${pageGroup.heading}-${gIdx}`}
+                          className="full-document-page-section"
+                        >
+                          {pageGroup.heading && (
+                            <div className="full-document-section-heading">
+                              <span>{pageGroup.heading}</span>
+                            </div>
+                          )}
 
-                            if (isHighlighted) {
-                              return (
-                                <React.Fragment key={sp.id}>
-                                  <mark
-                                    ref={highlightedChunkRef}
-                                    className="doc-inline-highlight"
-                                  >
-                                    <span className="doc-inline-highlight-badge">
-                                      HIGHLIGHTED SOURCE #{sourceIndex + 1}
-                                    </span>
-                                    {sp.cleanText}
-                                  </mark>
-                                  {spIdx < pageGroup.spans.length - 1 ? ' ' : ''}
-                                </React.Fragment>
-                              );
-                            }
-
-                            if (alsoCitedIdx >= 0) {
-                              return (
-                                <React.Fragment key={sp.id}>
-                                  <span
-                                    className="doc-inline-also-cited"
-                                    title={`Also cited as Source #${
-                                      alsoCitedIdx + 1
-                                    } — click to focus`}
-                                    onClick={() =>
-                                      setPreviewModal({
-                                        turn,
-                                        sourceIndex: alsoCitedIdx,
-                                      })
-                                    }
-                                  >
-                                    <span className="doc-inline-also-badge">
-                                      SOURCE #{alsoCitedIdx + 1}
-                                    </span>
-                                    {sp.cleanText}
+                          <div className="full-document-continuous-prose">
+                            {isTargetPage && matchedCharRange ? (
+                              <>
+                                <span>
+                                  {body.slice(0, matchedCharRange[0])}
+                                </span>
+                                <mark
+                                  ref={highlightedChunkRef}
+                                  className="doc-inline-highlight"
+                                >
+                                  <span className="doc-inline-highlight-badge">
+                                    SOURCE #{sourceIndex + 1}
                                   </span>
-                                  {spIdx < pageGroup.spans.length - 1 ? ' ' : ''}
-                                </React.Fragment>
-                              );
-                            }
-
-                            return (
-                              <React.Fragment key={sp.id}>
-                                <span>{sp.cleanText}</span>
-                                {spIdx < pageGroup.spans.length - 1 ? ' ' : ''}
-                              </React.Fragment>
-                            );
-                          })}
-                        </div>
-                      </section>
-                    ))}
+                                  {body.slice(
+                                    matchedCharRange[0],
+                                    matchedCharRange[1]
+                                  )}
+                                </mark>
+                                <span>{body.slice(matchedCharRange[1])}</span>
+                              </>
+                            ) : (
+                              <span>{body}</span>
+                            )}
+                          </div>
+                        </section>
+                      );
+                    })}
                   </article>
                 </div>
               </motion.div>

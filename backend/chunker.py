@@ -101,11 +101,12 @@ def split_into_sentences_and_blocks(text: str) -> List[Dict[str, Any]]:
             for s in re.split(r"(?<!^\d)(?<!\s\d)(?<=[.!?])\s+(?=[A-Z0-9\"\['(])", line)
             if s.strip()
         ]
-        for s in sentences:
+        for s_idx, s in enumerate(sentences):
             results.append({
                 "text": s,
                 "heading": current_heading,
                 "isTableOrCode": False,
+                "startsNewLine": s_idx == 0,
             })
 
     flush_table()
@@ -148,11 +149,12 @@ def _run_semantic_chunking(text: str, title: str, target_tokens: int) -> List[Di
         if not buffer:
             return
         joined_parts: List[str] = []
-        for part in buffer:
-            p_strip = part.strip()
+        for part_item in buffer:
+            p_strip = part_item["text"].strip() if isinstance(part_item, dict) else str(part_item).strip()
+            starts_new = part_item.get("startsNewLine", False) if isinstance(part_item, dict) else False
             if not joined_parts:
                 joined_parts.append(p_strip)
-            elif p_strip.startswith("|") or p_strip.startswith("```") or re.match(r"^(\d+\.|-|\*)\s+", p_strip) or joined_parts[-1].endswith("|"):
+            elif starts_new or p_strip.startswith("|") or p_strip.startswith("```") or re.match(r"^(\d+\.|-|\*)\s+", p_strip) or joined_parts[-1].endswith("|"):
                 joined_parts.append("\n" + p_strip)
             else:
                 joined_parts.append(" " + p_strip)
@@ -185,7 +187,7 @@ def _run_semantic_chunking(text: str, title: str, target_tokens: int) -> List[Di
             if sim < 0.14 or (buffer_tokens + unit_tokens) > target_tokens * 1.15:
                 flush()
 
-        buffer.append(unit["text"])
+        buffer.append(unit)
         buffer_tokens += unit_tokens
         if buffer_tokens >= target_tokens:
             flush()
@@ -202,15 +204,28 @@ def _run_hierarchical_chunking(text: str, title: str, target_tokens: int) -> Lis
 
     for p_idx, parent in enumerate(parents):
         body_no_header = re.sub(r"^\[.*?\]\n", "", parent["content"])
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body_no_header) if s.strip()]
-        child_buf: List[str] = []
+        raw_lines = [ln.strip() for ln in body_no_header.split("\n") if ln.strip()]
+        line_units: List[Tuple[str, bool]] = []
+        for ln in raw_lines:
+            sents = [s.strip() for s in re.split(r"(?<=[.!?])[ \t]+", ln) if s.strip()]
+            for s_i, s in enumerate(sents):
+                line_units.append((s, s_i == 0))
+        child_buf: List[Tuple[str, bool]] = []
         child_toks = 0
 
         def flush_child():
             nonlocal child_buf, child_toks
             if not child_buf:
                 return
-            body = " ".join(child_buf)
+            parts: List[str] = []
+            for seg_text, is_new_ln in child_buf:
+                if not parts:
+                    parts.append(seg_text)
+                elif is_new_ln:
+                    parts.append("\n" + seg_text)
+                else:
+                    parts.append(" " + seg_text)
+            body = "".join(parts)
             content = f"[{parent['sectionPath']} | Hierarchical Child]\n{body}"
             coherence, density = compute_chunk_metrics(body)
             child_chunks.append({
@@ -227,11 +242,11 @@ def _run_hierarchical_chunking(text: str, title: str, target_tokens: int) -> Lis
             child_buf = []
             child_toks = 0
 
-        for s in sentences:
+        for s, is_new_ln in line_units:
             s_tok = estimate_tokens(s)
             if child_toks + s_tok > child_target and child_buf:
                 flush_child()
-            child_buf.append(s)
+            child_buf.append((s, is_new_ln))
             child_toks += s_tok
         flush_child()
 
