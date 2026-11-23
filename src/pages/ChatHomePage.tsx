@@ -128,16 +128,27 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
     }
   }, [visibleTurns.length, isExecuting, pendingPrompt]);
 
-  // Auto-scroll the Floating Document Preview Window directly to the highlighted chunk
+  // Auto-scroll the Floating Document Preview Window directly to the highlighted passage first
   useEffect(() => {
     if (!previewModal) return;
-    const t = window.setTimeout(() => {
+    // Immediate jump so the user sees the highlighted passage first on open
+    const tFast = window.setTimeout(() => {
+      highlightedChunkRef.current?.scrollIntoView({
+        behavior: 'auto',
+        block: 'center',
+      });
+    }, 15);
+    // Smooth fine-tune once modal layout settles
+    const tSmooth = window.setTimeout(() => {
       highlightedChunkRef.current?.scrollIntoView({
         behavior: 'smooth',
         block: 'center',
       });
-    }, 80);
-    return () => window.clearTimeout(t);
+    }, 110);
+    return () => {
+      window.clearTimeout(tFast);
+      window.clearTimeout(tSmooth);
+    };
   }, [previewModal]);
 
   const openSourcePreviewModal = (
@@ -1094,6 +1105,57 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                   },
                 ];
 
+          const stripSyntheticChunkHeader = (raw: string): string => {
+            return raw
+              .replace(/^\[[^\]]+\]\s*\r?\n?/, '')
+              .replace(/^###\s+[^\r\n]+\r?\n?/, '')
+              .replace(/\r?\n?\[Adjacent Document Continuation\]:[\s\S]*$/, '')
+              .trim();
+          };
+
+          const extractCleanHeading = (sectionPath: string, docTitle: string): string => {
+            if (!sectionPath) return '';
+            const parts = sectionPath.split('>').map((p) => p.trim());
+            if (parts.length > 1) {
+              return parts.slice(1).join(' › ');
+            }
+            return sectionPath === docTitle ? '' : sectionPath;
+          };
+
+          // Group sequential segments into continuous document pages/sections (no chunk cards!)
+          const groupedDocumentPages: Array<{
+            heading: string;
+            spans: Array<{
+              id: string;
+              cleanText: string;
+            }>;
+          }> = [];
+
+          for (const sec of renderSections) {
+            const cleanHeading = extractCleanHeading(
+              sec.sectionPath,
+              activeRetrievedChunk.documentTitle
+            );
+            const cleanText = stripSyntheticChunkHeader(sec.content);
+            if (!cleanText) continue;
+
+            const lastGroup =
+              groupedDocumentPages[groupedDocumentPages.length - 1];
+            if (!lastGroup || lastGroup.heading !== cleanHeading) {
+              groupedDocumentPages.push({
+                heading: cleanHeading,
+                spans: [{ id: sec.id, cleanText }],
+              });
+            } else {
+              lastGroup.spans.push({ id: sec.id, cleanText });
+            }
+          }
+
+          const activeCleanHeading = extractCleanHeading(
+            activeRetrievedChunk.sectionPath,
+            activeRetrievedChunk.documentTitle
+          );
+
           return (
             <div
               style={{
@@ -1120,7 +1182,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                 }}
               />
 
-              {/* Floating Document Preview Card */}
+              {/* Floating Full Document Reader Window */}
               <motion.div
                 initial={{ opacity: 0, scale: 0.96, y: 12 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -1131,11 +1193,11 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                   position: 'relative',
                   zIndex: 121,
                   width: '100%',
-                  maxWidth: 920,
+                  maxWidth: 940,
                   maxHeight: '88vh',
                   display: 'flex',
                   flexDirection: 'column',
-                  padding: '24px 28px',
+                  padding: '22px 26px',
                   overflow: 'hidden',
                   backgroundColor: 'var(--clay-surface-alt)',
                 }}
@@ -1148,7 +1210,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                     justifyContent: 'space-between',
                     gap: 16,
                     paddingBottom: 14,
-                    marginBottom: 14,
+                    marginBottom: 12,
                     borderBottom: '1.5px solid var(--clay-border-light)',
                     flexShrink: 0,
                   }}
@@ -1164,16 +1226,15 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                       }}
                     >
                       <span className="clay-tag clay-tag-terracotta">
-                        DOCUMENT SOURCE PREVIEW // SOURCE #{sourceIndex + 1}
+                        FULL DOCUMENT READER // SOURCE #{sourceIndex + 1}
                       </span>
                       <span className="clay-tag clay-tag-sage">
-                        RERANK MATCH:{' '}
-                        {(activeRetrievedChunk.rerankScore * 100).toFixed(1)}% (
-                        {activeRetrievedChunk.cragGrade})
+                        MATCH CONFIDENCE:{' '}
+                        {(activeRetrievedChunk.rerankScore * 100).toFixed(1)}%
                       </span>
                       {matchedDoc && (
                         <span className="clay-tag">
-                          {matchedDoc.format} • {renderSections.length} SECTIONS
+                          {matchedDoc.format} • FULL CONTINUOUS DOCUMENT
                         </span>
                       )}
                     </div>
@@ -1191,7 +1252,9 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                         marginTop: 2,
                       }}
                     >
-                      Highlighted Section: {activeRetrievedChunk.sectionPath}
+                      Showing highlighted citation first
+                      {activeCleanHeading ? ` (${activeCleanHeading})` : ''} — scroll
+                      up or down to read the full document context
                     </div>
                   </div>
 
@@ -1208,7 +1271,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                       }
                     >
                       <Compass size={14} />
-                      <span>JUMP TO HIGHLIGHT</span>
+                      <span>CENTER ON HIGHLIGHT</span>
                     </button>
                     <button
                       type="button"
@@ -1230,7 +1293,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                       alignItems: 'center',
                       flexWrap: 'wrap',
                       gap: 8,
-                      marginBottom: 14,
+                      marginBottom: 12,
                       flexShrink: 0,
                     }}
                   >
@@ -1242,7 +1305,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                         color: 'var(--ink-muted)',
                       }}
                     >
-                      CITED SOURCES IN THIS ANSWER:
+                      JUMP TO CITED PASSAGE:
                     </span>
                     {turn.citations.map((cit, idx) => (
                       <button
@@ -1266,159 +1329,88 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                   </div>
                 )}
 
-                {/* Scrollable Document Viewer with Highlighted Cited Passage */}
+                {/* Continuous Full Document Reader Sheet (Single Unified Document Page, Inline Highlighting) */}
                 <div
                   style={{
                     flex: 1,
                     minHeight: 0,
                     overflowY: 'auto',
                     paddingRight: 6,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 14,
                   }}
                 >
-                  {renderSections.map((sec) => {
-                    const isHighlighted =
-                      sec.id === activeRetrievedChunk.chunkId;
-                    const alsoCitedIdx = turn.citations.findIndex(
-                      (c) => c.chunkId === sec.id
-                    );
-
-                    return (
-                      <div
-                        key={sec.id}
-                        ref={isHighlighted ? highlightedChunkRef : undefined}
-                        className={
-                          isHighlighted
-                            ? 'doc-preview-highlighted-chunk'
-                            : 'clay-well'
-                        }
-                        style={{
-                          padding: isHighlighted ? '18px 20px' : '14px 16px',
-                          cursor:
-                            alsoCitedIdx >= 0 && !isHighlighted
-                              ? 'pointer'
-                              : 'default',
-                        }}
-                        onClick={() => {
-                          if (alsoCitedIdx >= 0 && !isHighlighted) {
-                            setPreviewModal({
-                              turn,
-                              sourceIndex: alsoCitedIdx,
-                            });
-                          }
-                        }}
+                  <article className="full-document-sheet">
+                    {groupedDocumentPages.map((pageGroup, gIdx) => (
+                      <section
+                        key={`${pageGroup.heading}-${gIdx}`}
+                        className="full-document-page-section"
                       >
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            flexWrap: 'wrap',
-                            gap: 8,
-                            marginBottom: 8,
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 8,
-                              flexWrap: 'wrap',
-                            }}
-                          >
-                            {isHighlighted ? (
-                              <span className="clay-tag clay-tag-terracotta">
-                                HIGHLIGHTED SOURCE #{sourceIndex + 1} // CITED
-                                IN ANSWER
-                              </span>
-                            ) : alsoCitedIdx >= 0 ? (
-                              <span className="clay-tag clay-tag-sage">
-                                ALSO CITED AS SOURCE #{alsoCitedIdx + 1} (CLICK
-                                TO FOCUS)
-                              </span>
-                            ) : (
-                              <span className="clay-tag">
-                                SECTION #{sec.index}
-                              </span>
-                            )}
-                            <span
-                              className="font-display"
-                              style={{ fontSize: '0.88rem', fontWeight: 700 }}
-                            >
-                              {sec.sectionPath}
-                            </span>
-                          </div>
-
-                          <span
-                            className="font-mono"
-                            style={{
-                              fontSize: '0.68rem',
-                              color: 'var(--ink-muted)',
-                            }}
-                          >
-                            {sec.tokenCount} TOKENS • {sec.strategy.toUpperCase()}
-                          </span>
-                        </div>
-
-                        {isHighlighted ? (
-                          <>
-                            <mark className="doc-preview-mark">
-                              {sec.content}
-                            </mark>
-                            {activeRetrievedChunk.matchedTerms.length > 0 && (
-                              <div
-                                style={{
-                                  marginTop: 10,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  flexWrap: 'wrap',
-                                  gap: 6,
-                                }}
-                              >
-                                <span
-                                  className="font-mono"
-                                  style={{
-                                    fontSize: '0.68rem',
-                                    fontWeight: 700,
-                                    color: 'var(--ink-secondary)',
-                                  }}
-                                >
-                                  MATCHED ENTITIES:
-                                </span>
-                                {activeRetrievedChunk.matchedTerms
-                                  .slice(0, 10)
-                                  .map((mt) => (
-                                    <span
-                                      key={mt}
-                                      className="clay-tag clay-tag-sage"
-                                      style={{
-                                        padding: '2px 8px',
-                                        fontSize: '0.64rem',
-                                      }}
-                                    >
-                                      {mt}
-                                    </span>
-                                  ))}
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div
-                            style={{
-                              fontSize: '0.86rem',
-                              lineHeight: 1.6,
-                              color: 'var(--ink-secondary)',
-                              whiteSpace: 'pre-wrap',
-                            }}
-                          >
-                            {sec.content}
+                        {pageGroup.heading && (
+                          <div className="full-document-section-heading">
+                            <span>{pageGroup.heading}</span>
                           </div>
                         )}
-                      </div>
-                    );
-                  })}
+
+                        <div className="full-document-continuous-prose">
+                          {pageGroup.spans.map((sp, spIdx) => {
+                            const isHighlighted =
+                              sp.id === activeRetrievedChunk.chunkId;
+                            const alsoCitedIdx = turn.citations.findIndex(
+                              (c) => c.chunkId === sp.id
+                            );
+
+                            if (isHighlighted) {
+                              return (
+                                <React.Fragment key={sp.id}>
+                                  <mark
+                                    ref={highlightedChunkRef}
+                                    className="doc-inline-highlight"
+                                  >
+                                    <span className="doc-inline-highlight-badge">
+                                      HIGHLIGHTED SOURCE #{sourceIndex + 1}
+                                    </span>
+                                    {sp.cleanText}
+                                  </mark>
+                                  {spIdx < pageGroup.spans.length - 1 ? ' ' : ''}
+                                </React.Fragment>
+                              );
+                            }
+
+                            if (alsoCitedIdx >= 0) {
+                              return (
+                                <React.Fragment key={sp.id}>
+                                  <span
+                                    className="doc-inline-also-cited"
+                                    title={`Also cited as Source #${
+                                      alsoCitedIdx + 1
+                                    } — click to focus`}
+                                    onClick={() =>
+                                      setPreviewModal({
+                                        turn,
+                                        sourceIndex: alsoCitedIdx,
+                                      })
+                                    }
+                                  >
+                                    <span className="doc-inline-also-badge">
+                                      SOURCE #{alsoCitedIdx + 1}
+                                    </span>
+                                    {sp.cleanText}
+                                  </span>
+                                  {spIdx < pageGroup.spans.length - 1 ? ' ' : ''}
+                                </React.Fragment>
+                              );
+                            }
+
+                            return (
+                              <React.Fragment key={sp.id}>
+                                <span>{sp.cleanText}</span>
+                                {spIdx < pageGroup.spans.length - 1 ? ' ' : ''}
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ))}
+                  </article>
                 </div>
               </motion.div>
             </div>
