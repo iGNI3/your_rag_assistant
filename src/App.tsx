@@ -1003,6 +1003,8 @@ export const App: React.FC = () => {
                   <ChatHomePage
                     queryHistory={queryHistory}
                     config={config}
+                    documents={documents}
+                    chunks={chunks}
                     isExecuting={isExecuting}
                     onExecuteQuery={handleExecuteQuery}
                     onUpdateConfig={handleUpdateConfig}

@@ -24,19 +24,63 @@ function renderInlineTokens(
   return parts.map((part, idx) => {
     if (!part) return null;
 
-    // 1. Source Citation Pill
+    // 1. Source Citation Pill (Supports single [Source 1] or multi [Source 2, Source 4])
     if (
       (part.startsWith('**[Source') && part.endsWith(']**')) ||
       (part.startsWith('`[Source') && part.endsWith(']`')) ||
       (part.startsWith('[Source') && part.endsWith(']'))
     ) {
       const cleanTag = part.replace(/^[`*\s]+|[`*\s]+$/g, '');
+      const innerText = cleanTag.replace(/^\[|\]$/g, '');
+      const sourceNums = Array.from(innerText.matchAll(/Source\s+(\d+)/gi)).map(
+        (m) => m[1]
+      );
+
+      if (sourceNums.length > 1) {
+        return (
+          <span
+            key={idx}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              flexWrap: 'wrap',
+              verticalAlign: 'middle',
+              margin: '0 3px',
+            }}
+          >
+            {sourceNums.map((num) => (
+              <button
+                key={`${idx}-s-${num}`}
+                type="button"
+                data-tooltip={`Click to open Source #${num} in Document Preview & highlight passage`}
+                onClick={() =>
+                  onSelectCitationTag && onSelectCitationTag(`Source ${num}`)
+                }
+                className="clay-tag clay-tag-terracotta source-citation-pill"
+                style={{
+                  padding: '2px 9px',
+                  fontSize: '0.7rem',
+                  cursor: onSelectCitationTag ? 'pointer' : 'default',
+                  border: 'none',
+                }}
+              >
+                <FileText size={11} />
+                <span>SOURCE {num}</span>
+              </button>
+            ))}
+          </span>
+        );
+      }
+
+      const labelNum = sourceNums[0] ? `SOURCE ${sourceNums[0]}` : innerText;
       return (
         <button
           key={idx}
           type="button"
+          data-tooltip={`Click to open ${labelNum} in Document Preview & highlight passage`}
           onClick={() => onSelectCitationTag && onSelectCitationTag(cleanTag)}
-          className="clay-tag clay-tag-terracotta"
+          className="clay-tag clay-tag-terracotta source-citation-pill"
           style={{
             margin: '0 4px',
             padding: '2px 9px',
@@ -47,7 +91,7 @@ function renderInlineTokens(
           }}
         >
           <FileText size={11} />
-          <span>{cleanTag.replace(/^\[|\]$/g, '')}</span>
+          <span>{innerText}</span>
         </button>
       );
     }

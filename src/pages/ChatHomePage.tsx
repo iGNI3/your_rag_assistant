@@ -15,10 +15,15 @@ import {
   FileText,
   Layers,
   RotateCcw,
+  X,
+  Eye,
+  Compass,
 } from 'lucide-react';
 import {
   AgenticRagResponse,
   ChunkStrategyType,
+  DocumentChunk,
+  IngestedDocument,
   RagPipelineConfig,
 } from '../types';
 import { RichMarkdownRenderer } from '../components/RichMarkdownRenderer';
@@ -26,6 +31,8 @@ import { RichMarkdownRenderer } from '../components/RichMarkdownRenderer';
 interface ChatHomePageProps {
   queryHistory: AgenticRagResponse[];
   config: RagPipelineConfig;
+  documents?: IngestedDocument[];
+  chunks?: Array<Omit<DocumentChunk, 'embedding' | 'sparseTerms'>>;
   isExecuting: boolean;
   onExecuteQuery: (prompt: string) => Promise<void>;
   onUpdateConfig: (partial: Partial<RagPipelineConfig>) => Promise<void>;
@@ -65,6 +72,8 @@ const STARTER_PROMPTS = [
 export const ChatHomePage: React.FC<ChatHomePageProps> = ({
   queryHistory,
   config,
+  documents = [],
+  chunks = [],
   isExecuting,
   onExecuteQuery,
   onUpdateConfig,
@@ -74,10 +83,16 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
   onClearHistory,
 }) => {
   const [promptInput, setPromptInput] = useState<string>('');
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Record<string, boolean>>({});
   const [selectedCitationByTurn, setSelectedCitationByTurn] = useState<
     Record<string, string | null>
   >({});
+  const [previewModal, setPreviewModal] = useState<{
+    turn: AgenticRagResponse;
+    sourceIndex: number;
+  } | null>(null);
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
   const [savedTurnId, setSavedTurnId] = useState<string | null>(null);
   const [clearedAfterTimestamp, setClearedAfterTimestamp] = useState<number>(0);
@@ -85,25 +100,91 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const highlightedChunkRef = useRef<HTMLDivElement | null>(null);
 
   // Order history chronologically (oldest -> newest) like ChatGPT / Gemini
   const visibleTurns = [...queryHistory]
     .filter((q) => new Date(q.timestamp).getTime() > clearedAfterTimestamp)
     .reverse();
 
+  // Live elapsed timer & stage progression while LLM is generating an answer
+  useEffect(() => {
+    if (!isExecuting) {
+      setPendingPrompt(null);
+      setElapsedMs(0);
+      return;
+    }
+    const t0 = Date.now();
+    const timer = window.setInterval(() => {
+      setElapsedMs(Date.now() - t0);
+    }, 150);
+    return () => window.clearInterval(timer);
+  }, [isExecuting]);
+
   useEffect(() => {
     const el = chatScrollRef.current;
     if (el) {
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     }
-  }, [visibleTurns.length, isExecuting]);
+  }, [visibleTurns.length, isExecuting, pendingPrompt]);
+
+  // Auto-scroll the Floating Document Preview Window directly to the highlighted chunk
+  useEffect(() => {
+    if (!previewModal) return;
+    const t = window.setTimeout(() => {
+      highlightedChunkRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [previewModal]);
+
+  const openSourcePreviewModal = (
+    turn: AgenticRagResponse,
+    tagOrIdx: string | number
+  ) => {
+    let resolvedIdx = 0;
+    if (typeof tagOrIdx === 'number') {
+      resolvedIdx = tagOrIdx;
+    } else {
+      const numMatch = tagOrIdx.match(/Source\s+(\d+)/i);
+      if (numMatch) {
+        resolvedIdx = Math.max(
+          0,
+          Math.min(turn.citations.length - 1, parseInt(numMatch[1], 10) - 1)
+        );
+      } else {
+        const found = turn.citations.findIndex(
+          (c) =>
+            c.citationTag.includes(tagOrIdx) ||
+            tagOrIdx.includes(c.documentTitle)
+        );
+        if (found >= 0) resolvedIdx = found;
+      }
+    }
+    if (turn.citations[resolvedIdx]) {
+      setSelectedCitationByTurn((prev) => ({
+        ...prev,
+        [turn.queryId]: turn.citations[resolvedIdx].citationTag,
+      }));
+      setPreviewModal({ turn, sourceIndex: resolvedIdx });
+    }
+  };
+
+  const triggerQuery = async (text: string) => {
+    if (!text.trim() || isExecuting) return;
+    const clean = text.trim();
+    setPendingPrompt(clean);
+    await onExecuteQuery(clean);
+  };
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!promptInput.trim() || isExecuting) return;
     const toSend = promptInput.trim();
     setPromptInput('');
-    await onExecuteQuery(toSend);
+    await triggerQuery(toSend);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -234,7 +315,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                   key={i}
                   whileHover={{ y: -3 }}
                   whileTap={{ y: 1 }}
-                  onClick={() => onExecuteQuery(sp.text)}
+                  onClick={() => triggerQuery(sp.text)}
                   className="clay-card-alt"
                   style={{ cursor: 'pointer', padding: '18px 20px' }}
                 >
@@ -534,13 +615,9 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                   <div style={{ padding: '4px 2px 14px' }}>
                     <RichMarkdownRenderer
                       content={turn.answer}
-                      onSelectCitationTag={(tag) => {
-                        setSelectedCitationByTurn((prev) => ({
-                          ...prev,
-                          [turn.queryId]:
-                            prev[turn.queryId] === tag ? null : tag,
-                        }));
-                      }}
+                      onSelectCitationTag={(tag) =>
+                        openSourcePreviewModal(turn, tag)
+                      }
                     />
                   </div>
 
@@ -582,15 +659,9 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                           <button
                             key={cit.chunkId}
                             type="button"
-                            onClick={() =>
-                              setSelectedCitationByTurn((prev) => ({
-                                ...prev,
-                                [turn.queryId]: isCitOpen
-                                  ? null
-                                  : cit.citationTag,
-                              }))
-                            }
-                            className={`clay-btn ${
+                            data-tooltip={`Click to open Source #${cIdx + 1} (${cit.sectionPath}) in Document Preview & highlight`}
+                            onClick={() => openSourcePreviewModal(turn, cIdx)}
+                            className={`clay-btn source-citation-pill ${
                               isCitOpen ? 'clay-btn-terracotta' : ''
                             }`}
                             style={{
@@ -598,7 +669,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                               fontSize: '0.72rem',
                             }}
                           >
-                            <FileText size={12} />
+                            <Eye size={12} />
                             <span>
                               [{cIdx + 1}] {cit.documentTitle.slice(0, 26)} (
                               {(cit.relevanceScore * 100).toFixed(0)}%)
@@ -705,21 +776,150 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
           })
         )}
 
-        {/* Live Thinking Skeleton when executing */}
+        {/* Live Pending User Bubble + Multi-Stage LLM Answering Animation when executing */}
         {isExecuting && (
-          <div className="clay-card" style={{ padding: '20px 24px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span className="clay-tag clay-tag-terracotta">
-                AGENTIC PIPELINE ACTIVE
-              </span>
-              <span
-                className="font-display"
-                style={{ fontSize: '0.95rem', fontWeight: 700 }}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {pendingPrompt && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <div
+                  className="clay-card-alt"
+                  style={{
+                    maxWidth: '78%',
+                    backgroundColor: 'var(--clay-charcoal)',
+                    color: 'var(--ink-on-accent)',
+                    borderColor: 'rgba(255, 255, 255, 0.18)',
+                    boxShadow: 'var(--shadow-clay-charcoal)',
+                    padding: '16px 22px',
+                    borderRadius: '24px 24px 6px 24px',
+                  }}
+                >
+                  <div
+                    className="font-mono"
+                    style={{
+                      fontSize: '0.68rem',
+                      opacity: 0.72,
+                      marginBottom: 4,
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    USER PROMPT
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '0.98rem',
+                      fontWeight: 600,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {pendingPrompt}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="clay-card"
+              style={{
+                padding: '22px 26px',
+                borderRadius: '26px 26px 26px 8px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+              }}
+            >
+              {/* Top Row: Animated Equalizer Wave + Live Stage Label + Elapsed Timer */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: 12,
+                }}
               >
-                Small LLM reshaping prompt -&gt; HNSW + BM25+ RRF retrieval
-                -&gt; Cross-Encoder CRAG reranking -&gt; Synthesizing response...
-              </span>
-            </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div className="answering-wave-bars" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                  <div>
+                    <div
+                      className="font-display"
+                      style={{ fontSize: '0.98rem', fontWeight: 700 }}
+                    >
+                      {elapsedMs < 850
+                        ? `Stage 01 // Small LLM Reshaping Prompt & Expanding Domain Concepts...`
+                        : elapsedMs < 1700
+                        ? `Stage 02 // Searching 3-Layer HNSW Graph + BM25+ Lexical Index...`
+                        : elapsedMs < 2500
+                        ? `Stage 03 // Cross-Encoder Reranking & CRAG Relevance Gating...`
+                        : `Stage 04 // Synthesizing Grounded Answer via ${config.generatorModel}...`}
+                    </div>
+                    <div
+                      className="font-mono"
+                      style={{ fontSize: '0.72rem', color: 'var(--ink-muted)' }}
+                    >
+                      RAG_BUDDY IS GENERATING YOUR CITED RESPONSE
+                    </div>
+                  </div>
+                </div>
+
+                <span className="clay-tag clay-tag-terracotta">
+                  GENERATING • {(elapsedMs / 1000).toFixed(1)}s
+                </span>
+              </div>
+
+              {/* 4-Step Pipeline Stage Progress Pills */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+                  gap: 8,
+                }}
+              >
+                {[
+                  { label: '01 RESHAPE', threshold: 0 },
+                  { label: '02 HNSW + BM25+', threshold: 850 },
+                  { label: '03 CRAG RERANK', threshold: 1700 },
+                  { label: '04 LLM SYNTHESIS', threshold: 2500 },
+                ].map((st, sIdx) => {
+                  const isActiveOrDone = elapsedMs >= st.threshold;
+                  return (
+                    <div
+                      key={sIdx}
+                      className="font-mono"
+                      style={{
+                        padding: '6px 10px',
+                        borderRadius: 999,
+                        fontSize: '0.66rem',
+                        fontWeight: 700,
+                        textAlign: 'center',
+                        backgroundColor: isActiveOrDone
+                          ? 'var(--clay-terracotta)'
+                          : 'var(--clay-well)',
+                        color: isActiveOrDone
+                          ? 'var(--ink-on-accent)'
+                          : 'var(--ink-muted)',
+                        transition: 'background-color 0.2s ease, color 0.2s ease',
+                      }}
+                    >
+                      {st.label}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Animated Shimmer Skeleton Lines */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                <div className="answering-shimmer-line" style={{ width: '92%' }} />
+                <div className="answering-shimmer-line" style={{ width: '78%' }} />
+                <div className="answering-shimmer-line" style={{ width: '64%' }} />
+              </div>
+            </motion.div>
           </div>
         )}
 
@@ -782,7 +982,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
               style={{ padding: '15px 28px', fontSize: '0.94rem' }}
             >
               <Send size={17} />
-              <span>SEND</span>
+              <span>{isExecuting ? 'GENERATING...' : 'SEND'}</span>
             </motion.button>
           </div>
         </form>
@@ -846,7 +1046,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                 type="button"
                 className="clay-btn"
                 style={{ padding: '4px 10px', fontSize: '0.71rem' }}
-                onClick={() => onExecuteQuery(sp.text)}
+                onClick={() => triggerQuery(sp.text)}
               >
                 Ask: {sp.category}
               </button>
@@ -854,6 +1054,377 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Floating Document Preview Modal Window with Highlighted Cited Passage */}
+      <AnimatePresence>
+        {previewModal && (() => {
+          const { turn, sourceIndex } = previewModal;
+          const activeCit = turn.citations[sourceIndex] || turn.citations[0];
+          const activeRetrievedChunk =
+            turn.retrievedChunks.find((rc) => rc.chunkId === activeCit?.chunkId) ||
+            turn.retrievedChunks[sourceIndex] ||
+            turn.retrievedChunks[0];
+
+          if (!activeCit || !activeRetrievedChunk) return null;
+
+          const docId = activeRetrievedChunk.documentId;
+          const docChunks = chunks
+            .filter((c) => c.documentId === docId)
+            .sort((a, b) => a.index - b.index);
+          const matchedDoc = documents.find((d) => d.id === docId);
+
+          const renderSections =
+            docChunks.length > 0
+              ? docChunks.map((dc) => ({
+                  id: dc.id,
+                  index: dc.index,
+                  sectionPath: dc.sectionPath,
+                  content: dc.content,
+                  tokenCount: dc.tokenCount,
+                  strategy: dc.strategy,
+                }))
+              : [
+                  {
+                    id: activeRetrievedChunk.chunkId,
+                    index: 1,
+                    sectionPath: activeRetrievedChunk.sectionPath,
+                    content: activeRetrievedChunk.content,
+                    tokenCount: activeRetrievedChunk.tokenCount,
+                    strategy: activeRetrievedChunk.strategy,
+                  },
+                ];
+
+          return (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 120,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 20,
+              }}
+            >
+              {/* Click-outside backdrop */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.14 }}
+                onClick={() => setPreviewModal(null)}
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  backgroundColor: 'rgba(12, 15, 22, 0.48)',
+                }}
+              />
+
+              {/* Floating Document Preview Card */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.96, y: 12 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 8 }}
+                transition={{ duration: 0.16, ease: 'easeOut' }}
+                className="clay-card theme-popup-card"
+                style={{
+                  position: 'relative',
+                  zIndex: 121,
+                  width: '100%',
+                  maxWidth: 920,
+                  maxHeight: '88vh',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  padding: '24px 28px',
+                  overflow: 'hidden',
+                  backgroundColor: 'var(--clay-surface-alt)',
+                }}
+              >
+                {/* Modal Top Header */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'space-between',
+                    gap: 16,
+                    paddingBottom: 14,
+                    marginBottom: 14,
+                    borderBottom: '1.5px solid var(--clay-border-light)',
+                    flexShrink: 0,
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: 8,
+                        marginBottom: 6,
+                      }}
+                    >
+                      <span className="clay-tag clay-tag-terracotta">
+                        DOCUMENT SOURCE PREVIEW // SOURCE #{sourceIndex + 1}
+                      </span>
+                      <span className="clay-tag clay-tag-sage">
+                        RERANK MATCH:{' '}
+                        {(activeRetrievedChunk.rerankScore * 100).toFixed(1)}% (
+                        {activeRetrievedChunk.cragGrade})
+                      </span>
+                      {matchedDoc && (
+                        <span className="clay-tag">
+                          {matchedDoc.format} • {renderSections.length} SECTIONS
+                        </span>
+                      )}
+                    </div>
+                    <h3
+                      className="font-display"
+                      style={{ fontSize: '1.22rem', fontWeight: 700 }}
+                    >
+                      {activeRetrievedChunk.documentTitle}
+                    </h3>
+                    <div
+                      className="font-mono"
+                      style={{
+                        fontSize: '0.73rem',
+                        color: 'var(--ink-secondary)',
+                        marginTop: 2,
+                      }}
+                    >
+                      Highlighted Section: {activeRetrievedChunk.sectionPath}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="clay-btn"
+                      style={{ padding: '7px 12px', fontSize: '0.73rem' }}
+                      onClick={() =>
+                        highlightedChunkRef.current?.scrollIntoView({
+                          behavior: 'smooth',
+                          block: 'center',
+                        })
+                      }
+                    >
+                      <Compass size={14} />
+                      <span>JUMP TO HIGHLIGHT</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewModal(null)}
+                      className="clay-btn"
+                      style={{ padding: '8px 10px' }}
+                      aria-label="Close Document Preview"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Source Tabs Bar (Switch between all cited sources in this answer) */}
+                {turn.citations.length > 1 && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: 8,
+                      marginBottom: 14,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span
+                      className="font-mono"
+                      style={{
+                        fontSize: '0.68rem',
+                        fontWeight: 700,
+                        color: 'var(--ink-muted)',
+                      }}
+                    >
+                      CITED SOURCES IN THIS ANSWER:
+                    </span>
+                    {turn.citations.map((cit, idx) => (
+                      <button
+                        key={cit.chunkId}
+                        type="button"
+                        onClick={() =>
+                          setPreviewModal({ turn, sourceIndex: idx })
+                        }
+                        className={`clay-btn ${
+                          idx === sourceIndex ? 'clay-btn-terracotta' : ''
+                        }`}
+                        style={{ padding: '5px 11px', fontSize: '0.72rem' }}
+                      >
+                        <FileText size={12} />
+                        <span>
+                          SOURCE #{idx + 1} (
+                          {(cit.relevanceScore * 100).toFixed(0)}%)
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Scrollable Document Viewer with Highlighted Cited Passage */}
+                <div
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: 'auto',
+                    paddingRight: 6,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 14,
+                  }}
+                >
+                  {renderSections.map((sec) => {
+                    const isHighlighted =
+                      sec.id === activeRetrievedChunk.chunkId;
+                    const alsoCitedIdx = turn.citations.findIndex(
+                      (c) => c.chunkId === sec.id
+                    );
+
+                    return (
+                      <div
+                        key={sec.id}
+                        ref={isHighlighted ? highlightedChunkRef : undefined}
+                        className={
+                          isHighlighted
+                            ? 'doc-preview-highlighted-chunk'
+                            : 'clay-well'
+                        }
+                        style={{
+                          padding: isHighlighted ? '18px 20px' : '14px 16px',
+                          cursor:
+                            alsoCitedIdx >= 0 && !isHighlighted
+                              ? 'pointer'
+                              : 'default',
+                        }}
+                        onClick={() => {
+                          if (alsoCitedIdx >= 0 && !isHighlighted) {
+                            setPreviewModal({
+                              turn,
+                              sourceIndex: alsoCitedIdx,
+                            });
+                          }
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            flexWrap: 'wrap',
+                            gap: 8,
+                            marginBottom: 8,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              flexWrap: 'wrap',
+                            }}
+                          >
+                            {isHighlighted ? (
+                              <span className="clay-tag clay-tag-terracotta">
+                                HIGHLIGHTED SOURCE #{sourceIndex + 1} // CITED
+                                IN ANSWER
+                              </span>
+                            ) : alsoCitedIdx >= 0 ? (
+                              <span className="clay-tag clay-tag-sage">
+                                ALSO CITED AS SOURCE #{alsoCitedIdx + 1} (CLICK
+                                TO FOCUS)
+                              </span>
+                            ) : (
+                              <span className="clay-tag">
+                                SECTION #{sec.index}
+                              </span>
+                            )}
+                            <span
+                              className="font-display"
+                              style={{ fontSize: '0.88rem', fontWeight: 700 }}
+                            >
+                              {sec.sectionPath}
+                            </span>
+                          </div>
+
+                          <span
+                            className="font-mono"
+                            style={{
+                              fontSize: '0.68rem',
+                              color: 'var(--ink-muted)',
+                            }}
+                          >
+                            {sec.tokenCount} TOKENS • {sec.strategy.toUpperCase()}
+                          </span>
+                        </div>
+
+                        {isHighlighted ? (
+                          <>
+                            <mark className="doc-preview-mark">
+                              {sec.content}
+                            </mark>
+                            {activeRetrievedChunk.matchedTerms.length > 0 && (
+                              <div
+                                style={{
+                                  marginTop: 10,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  flexWrap: 'wrap',
+                                  gap: 6,
+                                }}
+                              >
+                                <span
+                                  className="font-mono"
+                                  style={{
+                                    fontSize: '0.68rem',
+                                    fontWeight: 700,
+                                    color: 'var(--ink-secondary)',
+                                  }}
+                                >
+                                  MATCHED ENTITIES:
+                                </span>
+                                {activeRetrievedChunk.matchedTerms
+                                  .slice(0, 10)
+                                  .map((mt) => (
+                                    <span
+                                      key={mt}
+                                      className="clay-tag clay-tag-sage"
+                                      style={{
+                                        padding: '2px 8px',
+                                        fontSize: '0.64rem',
+                                      }}
+                                    >
+                                      {mt}
+                                    </span>
+                                  ))}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div
+                            style={{
+                              fontSize: '0.86rem',
+                              lineHeight: 1.6,
+                              color: 'var(--ink-secondary)',
+                              whiteSpace: 'pre-wrap',
+                            }}
+                          >
+                            {sec.content}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+      </AnimatePresence>
     </div>
   );
 };

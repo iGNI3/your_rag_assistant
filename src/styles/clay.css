@@ -1690,3 +1690,157 @@ table {
     gap: 14px;
   }
 }
+
+/* ============================================================================
+   INTERACTIVE SOURCE CITATION HOVER TOOLTIP, LIVE ANSWERING ANIMATION &
+   FLOATING DOCUMENT PREVIEW HIGHLIGHT SYSTEM
+   ============================================================================ */
+
+/* Source Citation Pill Hover Tooltip ("Click to open Document Preview & highlight cited section") */
+.source-citation-pill {
+  position: relative;
+  transition: transform 0.14s ease, border-color 0.14s ease;
+}
+
+.source-citation-pill:hover {
+  transform: translateY(-1px);
+  border-color: var(--clay-terracotta) !important;
+}
+
+.source-citation-pill[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background-color: #18191d;
+  color: #ffffff;
+  padding: 6px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  z-index: 85;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
+}
+
+.source-citation-pill[data-tooltip]::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  border-width: 5px 5px 0 5px;
+  border-style: solid;
+  border-color: #18191d transparent transparent transparent;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  z-index: 85;
+}
+
+.source-citation-pill[data-tooltip]:hover::after,
+.source-citation-pill[data-tooltip]:focus-visible::after,
+.source-citation-pill[data-tooltip]:hover::before,
+.source-citation-pill[data-tooltip]:focus-visible::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Live LLM Answering Wave Equalizer Animation (GPU-Composited ScaleY) */
+@keyframes answeringWave {
+  0%,
+  100% {
+    transform: scaleY(0.32);
+    opacity: 0.52;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.answering-wave-bars {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 6px;
+}
+
+.answering-wave-bars span {
+  display: inline-block;
+  width: 4px;
+  height: 18px;
+  border-radius: 999px;
+  background-color: var(--clay-terracotta);
+  transform-origin: center;
+  will-change: transform, opacity;
+  animation: answeringWave 0.9s ease-in-out infinite;
+}
+
+.answering-wave-bars span:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.answering-wave-bars span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.answering-wave-bars span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.answering-wave-bars span:nth-child(4) {
+  animation-delay: 0.45s;
+}
+
+/* Skeleton Shimmer Line inside Live Answering Card */
+@keyframes answeringShimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.answering-shimmer-line {
+  height: 11px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--clay-well) 20%,
+    var(--clay-surface-alt) 50%,
+    var(--clay-well) 80%
+  );
+  background-size: 200% 100%;
+  animation: answeringShimmer 1.5s linear infinite;
+}
+
+/* Floating Document Preview Modal — Highlighted Source Section & Passage */
+.doc-preview-highlighted-chunk {
+  background-color: var(--clay-surface);
+  border: 2px solid var(--clay-terracotta);
+  border-radius: 20px;
+  box-shadow: var(--shadow-clay-sm);
+}
+
+.doc-preview-mark {
+  display: block;
+  background-color: rgba(242, 155, 75, 0.22);
+  color: var(--ink-primary);
+  padding: 12px 14px;
+  border-radius: 12px;
+  border-left: 4px solid var(--clay-terracotta);
+  font-size: 0.9rem;
+  line-height: 1.68;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
