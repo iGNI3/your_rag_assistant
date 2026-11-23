@@ -134,8 +134,27 @@ def seed_user_workspace_if_empty(user_id: str):
 
 def execute_rag_pipeline(prompt: str, config_used: Dict[str, Any], user_id: str) -> Dict[str, Any]:
     all_chunks = vector_db.get_all_chunks(user_id)
+    user_docs = vector_db.get_all_documents(user_id)
+
+    def _is_seed(doc_id: str) -> bool:
+        return any(
+            s in doc_id
+            for s in (
+                "doc_hnsw_architecture",
+                "doc_chunking_optimization",
+                "doc_agentic_reshaper_ocr",
+                "doc_small_llm_crag_ocr",
+                "seed_01",
+                "seed_02",
+                "seed_03",
+            )
+        )
+
+    custom_chunks = [c for c in all_chunks if not _is_seed(c["documentId"])]
+    active_pool = custom_chunks if custom_chunks else all_chunks
+
     corpus_keywords: List[str] = []
-    for c in all_chunks:
+    for c in active_pool:
         for kw in c.get("keywords", []):
             if kw not in corpus_keywords:
                 corpus_keywords.append(kw)
@@ -156,6 +175,7 @@ def execute_rag_pipeline(prompt: str, config_used: Dict[str, Any], user_id: str)
         pruned_noise_chunks=retrieval["prunedNoiseChunks"],
         config=config_used,
         timings=retrieval["timings"],
+        user_documents=user_docs,
     )
 
     resp_obj = {

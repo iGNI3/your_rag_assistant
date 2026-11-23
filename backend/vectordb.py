@@ -360,12 +360,39 @@ class HybridVectorDatabase:
         config: Dict[str, Any],
         user_id: str = "usr_demo_admin",
     ) -> Dict[str, Any]:
-        all_chunks = self.get_all_chunks(user_id)
+        raw_all_chunks = self.get_all_chunks(user_id)
+
+        # If the user has uploaded their own custom documents, prioritize them and exclude
+        # the 3 starter RAG demo whitepapers unless the prompt explicitly asks about RAG internals.
+        def _is_starter_seed_doc(doc_id: str) -> bool:
+            return any(
+                s in doc_id
+                for s in (
+                    "doc_hnsw_architecture",
+                    "doc_chunking_optimization",
+                    "doc_agentic_reshaper_ocr",
+                    "doc_small_llm_crag_ocr",
+                    "seed_01",
+                    "seed_02",
+                    "seed_03",
+                )
+            )
+
+        custom_chunks = [c for c in raw_all_chunks if not _is_starter_seed_doc(c["documentId"])]
+        rag_internal_pattern = r"\b(hnsw|bm25|rrf|reciprocal rank|hyde|crag|cross-encoder|chunking strategy|semantic inflection|sliding window)\b"
+        asks_about_rag_internals = bool(re.search(rag_internal_pattern, original_prompt, flags=re.IGNORECASE))
+
+        if custom_chunks and not asks_about_rag_internals:
+            all_chunks = custom_chunks
+        else:
+            all_chunks = raw_all_chunks
+
         idf_cache, avg_chunk_len, _ = self._compute_user_idf_and_hnsw(all_chunks)
         t0 = time.time()
 
-        primary_vec = compute_semantic_embedding(reshaped_primary_query)
-        hyde_vec = compute_semantic_embedding(hyde_document or reshaped_primary_query)
+        # Anchor primary vector strongly on the user's original prompt + reshaped query
+        primary_vec = compute_semantic_embedding(f"{original_prompt} {original_prompt} {reshaped_primary_query}")
+        hyde_vec = compute_semantic_embedding(hyde_document or original_prompt)
         sub_vecs = (
             [compute_semantic_embedding(sq) for sq in sub_queries]
             if config.get("enableMultiQuery", True)
@@ -383,21 +410,22 @@ class HybridVectorDatabase:
             score = compute_vector_similarity(primary_vec, chunk["embedding"], metric)
             if config.get("enableHyde", True):
                 hyde_sim = compute_vector_similarity(hyde_vec, chunk["embedding"], metric)
-                score = score * 0.68 + hyde_sim * 0.32
+                score = score * 0.78 + hyde_sim * 0.22
             if sub_vecs:
                 max_sub = max(
                     compute_vector_similarity(sv, chunk["embedding"], metric)
                     for sv in sub_vecs
                 )
-                score = score * 0.75 + max_sub * 0.25
+                score = score * 0.82 + max_sub * 0.18
             dense_scores[chunk["id"]] = round(score, 4)
         hnsw_dense_ms = max(3, int(round((time.time() - t_dense) * 1000)))
 
         t_sparse = time.time()
-        combined_q = reshaped_primary_query + " " + (
+        orig_terms = tokenize_for_sparse(original_prompt)
+        expanded_q = reshaped_primary_query + " " + (
             " ".join(sub_queries) if config.get("enableMultiQuery", True) else ""
         )
-        query_terms = tokenize_for_sparse(combined_q)
+        query_terms = tokenize_for_sparse(original_prompt + " " + expanded_q)
         sparse_scores: Dict[str, float] = {}
         matched_terms_map: Dict[str, List[str]] = {}
         k1 = 1.5
@@ -416,12 +444,14 @@ class HybridVectorDatabase:
                     idf = idf_cache.get(q_term, 1.2)
                     num = tf * (k1 + 1.0)
                     denom = tf + k1 * (1.0 - b + b * (chunk_len / avg_chunk_len))
-                    bm25 += idf * (num / denom + 1.0)
+                    # Weight terms that actually appeared in the user's original prompt 3.5x higher
+                    term_weight = 3.5 if q_term in orig_terms else 0.75
+                    bm25 += term_weight * idf * (num / denom + 1.0)
 
             sec_lower = chunk["sectionPath"].lower()
-            for q_term in query_terms.keys():
+            for q_term in orig_terms.keys():
                 if q_term in sec_lower:
-                    bm25 *= 1.22
+                    bm25 *= 1.25
 
             if bm25 > max_raw_bm25:
                 max_raw_bm25 = bm25
@@ -429,7 +459,7 @@ class HybridVectorDatabase:
             matched_terms_map[chunk["id"]] = matched
 
         for cid, val in list(sparse_scores.items()):
-            sparse_scores[cid] = round(min(1.0, val / max_raw_bm25), 4)
+            sparse_scores[cid] = round(min(1.0, val / max_raw_bm25), 4) if max_raw_bm25 > 0.01 else 0.0
         bm25_sparse_ms = max(2, int(round((time.time() - t_sparse) * 1000)))
 
         t_rrf = time.time()
@@ -491,7 +521,10 @@ class HybridVectorDatabase:
         rrf_mmr_ms = max(2, int(round((time.time() - t_rrf) * 1000)))
 
         t_rerank = time.time()
-        query_keywords = extract_top_keywords(f"{original_prompt} {reshaped_primary_query}", 14)
+        orig_keywords = extract_top_keywords(original_prompt, 10)
+        if not orig_keywords:
+            orig_keywords = [w for w in re.split(r"\W+", original_prompt.lower()) if len(w) >= 2]
+        query_keywords = orig_keywords or extract_top_keywords(reshaped_primary_query, 10)
         crag_threshold = float(config.get("cragThreshold", 0.34))
 
         scored_results: List[Dict[str, Any]] = []
@@ -499,47 +532,56 @@ class HybridVectorDatabase:
             ch = item["chunk"]
             cid = ch["id"]
             content_lower = ch["content"].lower()
+            sparse_map = ch.get("sparseTerms", {})
             dense = dense_scores.get(cid, 0.0)
             sparse = sparse_scores.get(cid, 0.0)
             rrf = rrf_scores.get(cid, 0.0)
 
-            exact_hits = sum(1 for kw in query_keywords if kw.lower() in content_lower)
+            exact_hits = sum(
+                1
+                for kw in query_keywords
+                if kw.lower() in content_lower or stem_word(kw) in sparse_map
+            )
             coverage_ratio = (exact_hits / len(query_keywords)) if query_keywords else 0.5
 
             phrase_bonus = 0.0
             for i in range(len(query_keywords) - 1):
-                pattern = re.escape(query_keywords[i]) + r"[\s\S]{0,45}" + re.escape(query_keywords[i + 1])
+                pattern = re.escape(query_keywords[i]) + r"[\s\S]{0,60}" + re.escape(query_keywords[i + 1])
                 if re.search(pattern, ch["content"], flags=re.IGNORECASE):
-                    phrase_bonus += 0.08
+                    phrase_bonus += 0.12
 
             structural_quality = (ch["coherenceScore"] + ch["informationDensity"]) / 200.0
+            # Heavily reward direct lexical & stem coverage of the user's actual prompt keywords
+            raw_rerank = (
+                rrf * 0.38
+                + coverage_ratio * 0.44
+                + min(0.22, phrase_bonus)
+                + structural_quality * 0.06
+            )
+            if query_keywords and exact_hits == 0:
+                raw_rerank *= 0.55
+
             rerank_score = (
-                round(
-                    min(
-                        0.995,
-                        rrf * 0.48 + coverage_ratio * 0.34 + min(0.18, phrase_bonus) + structural_quality * 0.1,
-                    ),
-                    4,
-                )
+                round(min(0.995, raw_rerank), 4)
                 if config.get("enableCrossEncoderRerank", True)
                 else rrf
             )
 
-            if rerank_score >= max(0.54, crag_threshold + 0.16) or coverage_ratio >= 0.45:
+            if (rerank_score >= max(0.50, crag_threshold + 0.12) and exact_hits >= 1) or coverage_ratio >= 0.45:
                 crag_grade = "HIGHLY_RELEVANT"
                 crag_reason = (
                     f"High semantic alignment ({rerank_score * 100:.1f}%) with direct lexical anchor coverage "
-                    f"({exact_hits}/{len(query_keywords)} key entities)."
+                    f"({exact_hits}/{len(query_keywords)} prompt entities)."
                 )
-            elif rerank_score >= crag_threshold or exact_hits >= 1:
+            elif exact_hits >= 1 and rerank_score >= crag_threshold * 0.85:
                 crag_grade = "PARTIAL_SUPPORT"
                 crag_reason = (
-                    f"Contextual support ({rerank_score * 100:.1f}%) providing background on [{ch['sectionPath']}]."
+                    f"Contextual support ({rerank_score * 100:.1f}%) matching {exact_hits} prompt term(s) in [{ch['sectionPath']}]."
                 )
             else:
                 crag_grade = "IRRELEVANT_NOISE"
                 crag_reason = (
-                    f"Below CRAG confidence gate ({rerank_score * 100:.1f}% < {crag_threshold * 100:.0f}%); "
+                    f"Below CRAG confidence gate ({rerank_score * 100:.1f}%, {exact_hits} direct prompt hits); "
                     f"pruned to prevent context dilution."
                 )
 
@@ -578,10 +620,10 @@ class HybridVectorDatabase:
         if config.get("enableCragFilter", True):
             valid = [r for r in scored_results if r["cragGrade"] != "IRRELEVANT_NOISE"]
             pruned = [r for r in scored_results if r["cragGrade"] == "IRRELEVANT_NOISE"]
-            if len(valid) >= 2:
+            if len(valid) >= 1:
                 retrieved_chunks = valid[:top_k_reranked]
             else:
-                retrieved_chunks = scored_results[:min(3, top_k_reranked)]
+                retrieved_chunks = scored_results[:min(2, top_k_reranked)]
                 pruned = scored_results[len(retrieved_chunks):]
         else:
             retrieved_chunks = scored_results[:top_k_reranked]

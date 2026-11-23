@@ -249,7 +249,7 @@ def scan_local_model_path(target_path: str, workspace_dir: str) -> Dict[str, Any
     }
 
 
-def _http_post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str], timeout: float = 12.0) -> Optional[Dict[str, Any]]:
+def _http_post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str], timeout: float = 15.0) -> Optional[Dict[str, Any]]:
     try:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **headers}, method="POST")
@@ -259,6 +259,75 @@ def _http_post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str], 
         return None
 
 
+def _get_api_key(provider: str, config: Dict[str, Any]) -> str:
+    api_keys = config.get("apiKeys", {}) or {}
+    key = (api_keys.get(provider) or "").strip()
+    if key and not key.startswith("••••"):
+        return key
+    env_map = {
+        "gemini": "GEMINI_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+    env_name = env_map.get(provider)
+    return (os.environ.get(env_name, "") if env_name else "").strip()
+
+
+def _resolve_effective_provider_and_model(
+    provider: str,
+    model: str,
+    config: Dict[str, Any],
+) -> Tuple[str, str]:
+    """
+    If a stage is still set to 'builtin_local' / 'offline_gguf', but the user configured
+    an external provider on the other stage or saved a valid API key in Settings,
+    automatically route through that active external LLM provider so real answers are generated.
+    """
+    if provider not in ("builtin_local", "offline_gguf"):
+        return provider, model
+
+    other_prov = config.get("reshaperProvider")
+    if other_prov not in ("builtin_local", "offline_gguf", None) and _get_api_key(str(other_prov), config):
+        return str(other_prov), str(config.get("reshaperModel") or "")
+
+    other_gen = config.get("generatorProvider")
+    if other_gen not in ("builtin_local", "offline_gguf", None) and _get_api_key(str(other_gen), config):
+        return str(other_gen), str(config.get("generatorModel") or "")
+
+    for cand in ("gemini", "groq", "openai", "anthropic", "openrouter"):
+        if _get_api_key(cand, config):
+            return cand, ""
+
+    return provider, model
+
+
+def _normalize_gemini_model_candidates(raw_model: str) -> List[str]:
+    """
+    Normalizes display names like 'Gemini 2.5 Flash Lite' -> 'gemini-2.5-flash-lite'
+    and returns an ordered fallback list of valid Google Gemini REST API model slugs.
+    """
+    cleaned = (raw_model or "").strip().lower()
+    cleaned = re.sub(r"[^a-z0-9._\-]+", "-", cleaned).strip("-")
+    if not cleaned.startswith("gemini"):
+        cleaned = "gemini-2.5-flash"
+
+    candidates = [
+        cleaned,
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+    ]
+    seen: List[str] = []
+    for c in candidates:
+        if c and c not in seen:
+            seen.append(c)
+    return seen
+
+
 def call_external_llm_if_available(
     provider: str,
     model: str,
@@ -266,18 +335,18 @@ def call_external_llm_if_available(
     user_prompt: str,
     config: Dict[str, Any],
 ) -> Optional[str]:
-    if provider in ("builtin_local", "offline_gguf"):
+    eff_provider, eff_model = _resolve_effective_provider_and_model(provider, model, config)
+    if eff_provider in ("builtin_local", "offline_gguf"):
         return None
 
     local_eps = config.get("localEndpoints", {})
-    api_keys = config.get("apiKeys", {})
 
-    if provider == "ollama":
+    if eff_provider == "ollama":
         base_url = (local_eps.get("ollamaUrl") or "http://localhost:11434").rstrip("/")
         res = _http_post_json(
             f"{base_url}/api/chat",
             {
-                "model": model or "llama3.1:8b",
+                "model": eff_model or "llama3.1:8b",
                 "stream": False,
                 "messages": [
                     {"role": "system", "content": system_prompt},
@@ -288,12 +357,12 @@ def call_external_llm_if_available(
         )
         return res.get("message", {}).get("content") if res else None
 
-    if provider == "lmstudio":
+    if eff_provider == "lmstudio":
         base_url = (local_eps.get("lmStudioUrl") or "http://localhost:1234/v1").rstrip("/")
         res = _http_post_json(
             f"{base_url}/chat/completions",
             {
-                "model": model or "local-model",
+                "model": eff_model or "local-model",
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -305,72 +374,99 @@ def call_external_llm_if_available(
         choices = (res or {}).get("choices", [])
         return choices[0].get("message", {}).get("content") if choices else None
 
-    if provider in ("openai", "groq", "openrouter"):
-        key = (api_keys.get(provider) or "").strip()
-        if not key or key.startswith("••••"):
+    if eff_provider in ("openai", "groq", "openrouter"):
+        key = _get_api_key(eff_provider, config)
+        if not key:
             return None
         endpoint = (
             "https://api.openai.com/v1/chat/completions"
-            if provider == "openai"
+            if eff_provider == "openai"
             else "https://api.groq.com/openai/v1/chat/completions"
-            if provider == "groq"
+            if eff_provider == "groq"
             else "https://openrouter.ai/api/v1/chat/completions"
         )
-        res = _http_post_json(
-            endpoint,
-            {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.2,
-            },
-            {"Authorization": f"Bearer {key}"},
+        default_slug = (
+            "gpt-4o-mini"
+            if eff_provider == "openai"
+            else "llama-3.3-70b-versatile"
+            if eff_provider == "groq"
+            else "google/gemini-2.5-flash"
         )
-        choices = (res or {}).get("choices", [])
-        return choices[0].get("message", {}).get("content") if choices else None
-
-    if provider == "gemini":
-        key = (api_keys.get("gemini") or "").strip()
-        if not key or key.startswith("••••"):
-            return None
-        gemini_model = model or "gemini-2.5-flash"
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={urllib.parse.quote(key)}"
-        res = _http_post_json(
-            url,
-            {
-                "systemInstruction": {"parts": [{"text": system_prompt}]},
-                "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-                "generationConfig": {"temperature": 0.2},
-            },
-            {},
-        )
-        cands = (res or {}).get("candidates", [])
-        if cands:
-            parts = cands[0].get("content", {}).get("parts", [])
-            if parts:
-                return parts[0].get("text")
+        slug_candidates = [s for s in [(eff_model or "").strip(), default_slug] if s]
+        for slug in slug_candidates:
+            res = _http_post_json(
+                endpoint,
+                {
+                    "model": slug,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": 0.2,
+                },
+                {"Authorization": f"Bearer {key}"},
+            )
+            choices = (res or {}).get("choices", [])
+            if choices:
+                txt = choices[0].get("message", {}).get("content")
+                if txt:
+                    return txt
         return None
 
-    if provider == "anthropic":
-        key = (api_keys.get("anthropic") or "").strip()
-        if not key or key.startswith("••••"):
+    if eff_provider == "gemini":
+        key = _get_api_key("gemini", config)
+        if not key:
             return None
-        res = _http_post_json(
-            "https://api.anthropic.com/v1/messages",
-            {
-                "model": model or "claude-3-5-haiku-latest",
-                "max_tokens": 1024,
-                "system": system_prompt,
-                "messages": [{"role": "user", "content": user_prompt}],
-            },
-            {"x-api-key": key, "anthropic-version": "2023-06-01"},
-        )
-        content_list = (res or {}).get("content", [])
-        return content_list[0].get("text") if content_list else None
+        for gemini_slug in _normalize_gemini_model_candidates(eff_model):
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{urllib.parse.quote(gemini_slug)}:generateContent?key={urllib.parse.quote(key)}"
+            res = _http_post_json(
+                url,
+                {
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
+                    "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                    "generationConfig": {"temperature": 0.2},
+                },
+                {},
+            )
+            cands = (res or {}).get("candidates", [])
+            if cands:
+                parts = cands[0].get("content", {}).get("parts", [])
+                if parts and parts[0].get("text"):
+                    return parts[0].get("text")
+        return None
+
+    if eff_provider == "anthropic":
+        key = _get_api_key("anthropic", config)
+        if not key:
+            return None
+        for slug in [s for s in [(eff_model or "").strip(), "claude-3-5-haiku-latest"] if s]:
+            res = _http_post_json(
+                "https://api.anthropic.com/v1/messages",
+                {
+                    "model": slug,
+                    "max_tokens": 1024,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_prompt}],
+                },
+                {"x-api-key": key, "anthropic-version": "2023-06-01"},
+            )
+            content_list = (res or {}).get("content", [])
+            if content_list and content_list[0].get("text"):
+                return content_list[0].get("text")
+        return None
 
     return None
+
+
+def _is_conversational_greeting(prompt: str) -> bool:
+    cleaned = re.sub(r"[^a-z0-9\s]", "", prompt.strip().lower()).strip()
+    if not cleaned:
+        return True
+    greeting_patterns = (
+        r"^(hi+|hello+|hey+|yo+|hola|namaste|good\s+(morning|afternoon|evening|day))(\s+there|\s+rag\s*buddy|\s+assistant)?$",
+        r"^(how\s+are\s+you|who\s+are\s+you|what\s+are\s+you|what\s+can\s+you\s+do|help(\s+me)?|thanks|thank\s+you)$",
+    )
+    return any(re.match(pat, cleaned) for pat in greeting_patterns)
 
 
 def reshape_user_prompt(
@@ -381,7 +477,9 @@ def reshape_user_prompt(
     t0 = time.time()
     cleaned_input = raw_prompt.strip()
 
-    if re.search(r"compare|vs|versus|difference|benchmark|tradeoff|better", cleaned_input, re.I):
+    if _is_conversational_greeting(cleaned_input):
+        detected_intent = "CONVERSATIONAL_GREETING"
+    elif re.search(r"compare|vs|versus|difference|benchmark|tradeoff|better", cleaned_input, re.I):
         detected_intent = "COMPARATIVE_AUDIT"
     elif re.search(r"how to|steps|configure|setup|implement|guide|pipeline", cleaned_input, re.I):
         detected_intent = "PROCEDURAL_HOWTO"
@@ -392,7 +490,7 @@ def reshape_user_prompt(
     else:
         detected_intent = "FACTUAL_LOOKUP"
 
-    extracted_entities = extract_top_keywords(cleaned_input, 6)
+    extracted_entities = extract_top_keywords(cleaned_input, 8)
     word_count = len(re.split(r"\s+", cleaned_input))
     complexity = (
         "HIGH"
@@ -402,27 +500,54 @@ def reshape_user_prompt(
         else "LOW"
     )
 
-    aligned_terms: List[str] = []
-    for ent in extracted_entities:
-        for ckw in corpus_keywords:
-            if ckw != ent and (ckw.startswith(ent[:4]) or ent.startswith(ckw[:4])) and ckw not in aligned_terms:
-                aligned_terms.append(ckw)
-    expansion_context = ", ".join(aligned_terms[:4])
-
     provider = config.get("reshaperProvider", "builtin_local")
     model_name = config.get("reshaperModel", "Qwen2.5-3B-Instruct-Q5_K_M")
 
+    active_model_label = (
+        os.path.basename(config.get("offlineModelPath", ""))
+        if provider == "offline_gguf" and config.get("offlineModelPath")
+        else (model_name or "Qwen2.5-3B-Reshaper-Core")
+    )
+
+    if detected_intent == "CONVERSATIONAL_GREETING":
+        return {
+            "originalPrompt": cleaned_input,
+            "detectedIntent": detected_intent,
+            "complexityLevel": "LOW",
+            "reshapedPrimaryQuery": cleaned_input,
+            "stepBackQuery": "Conversational greeting and workspace document overview",
+            "subQueries": [cleaned_input],
+            "hydeDocument": cleaned_input,
+            "extractedEntities": extracted_entities,
+            "reasoningTrace": "Detected conversational greeting; bypassed technical query expansion to respond directly.",
+            "modelUsed": active_model_label,
+            "providerUsed": provider,
+            "latencyMs": max(4, int(round((time.time() - t0) * 1000))),
+            "clarityScoreBefore": 90,
+            "clarityScoreAfter": 98,
+        }
+
+    aligned_terms: List[str] = []
+    for ent in extracted_entities:
+        if len(ent) < 3:
+            continue
+        for ckw in corpus_keywords:
+            if ckw != ent and len(ckw) >= 3 and (ckw.startswith(ent[:4]) or ent.startswith(ckw[:4])) and ckw not in aligned_terms:
+                aligned_terms.append(ckw)
+    expansion_context = " ".join(aligned_terms[:4])
+
     llm_system = (
-        "You are a Small LLM Query Reshaping Agent in a Python Agentic RAG system. "
+        "You are a Small LLM Query Reshaping Agent in a RAG system. "
         "Given a user prompt, output ONLY valid JSON with keys: "
-        '"reshapedPrimaryQuery", "stepBackQuery", "subQueries" (array of 3 strings), '
-        '"hydeDocument" (2-sentence hypothetical technical answer passage), and "reasoningTrace".'
+        '"reshapedPrimaryQuery" (stay strictly on the user\'s topic and entities), '
+        '"stepBackQuery", "subQueries" (array of 3 strings focused on the user\'s question), '
+        '"hydeDocument" (2-sentence direct hypothetical answer focused strictly on the user\'s topic), and "reasoningTrace".'
     )
     external_raw = call_external_llm_if_available(
         provider=provider,
         model=model_name,
         system_prompt=llm_system,
-        user_prompt=f'User Prompt: "{cleaned_input}"\nActive Corpus Terms: {", ".join(corpus_keywords[:20])}',
+        user_prompt=f'User Prompt: "{cleaned_input}"\nRelated Document Terms: {", ".join(aligned_terms[:10])}',
         config=config,
     )
 
@@ -436,7 +561,7 @@ def reshape_user_prompt(
                     "detectedIntent": detected_intent,
                     "complexityLevel": complexity,
                     "reshapedPrimaryQuery": parsed.get("reshapedPrimaryQuery") or cleaned_input,
-                    "stepBackQuery": parsed.get("stepBackQuery") or f"Foundational principles of {' '.join(extracted_entities)}",
+                    "stepBackQuery": parsed.get("stepBackQuery") or f"Core details and clauses regarding {' '.join(extracted_entities)}",
                     "subQueries": (parsed.get("subQueries") or [cleaned_input])[:4],
                     "hydeDocument": parsed.get("hydeDocument") or cleaned_input,
                     "extractedEntities": extracted_entities,
@@ -450,33 +575,20 @@ def reshape_user_prompt(
         except Exception:
             pass
 
+    # Domain-neutral local query expansion: strictly preserve the user's actual question entities
+    # without injecting any unrelated RAG/HNSW/chunking boilerplate.
     core_subject = " ".join(extracted_entities) if extracted_entities else cleaned_input
-    reshaped_primary = (
-        f"{core_subject} technical specification, architecture, metrics, and optimization ({expansion_context})"
-        if expansion_context
-        else f"{core_subject} technical mechanism, configuration parameters, and performance metrics"
-    )
-    step_back = f"Underlying architectural principles, mathematical formulation, and system tradeoffs governing {core_subject}"
+    reshaped_primary = f"{cleaned_input} {expansion_context}".strip() if expansion_context else cleaned_input
+    step_back = f"Key rules, definitions, terms, and conditions governing {core_subject}"
     sub_queries = [
-        f"Core definition, architectural parameters, and algorithmic workflow of {' '.join(extracted_entities[:3]) or cleaned_input}",
-        f"Quantitative performance metrics, latency benchmarks, and optimization thresholds for {core_subject}",
-        f"Comparative tradeoffs, edge-case failure modes, and best implementation practices regarding {core_subject}",
+        cleaned_input,
+        f"{core_subject} eligibility, coverage, procedure, and details",
+        f"{core_subject} clauses, terms, requirements, and exceptions {expansion_context}".strip(),
     ]
-    hyde_doc = (
-        f"In an optimized production RAG architecture, {core_subject} operates by combining structural boundary detection, "
-        f"HNSW vector indexing, Reciprocal Rank Fusion (RRF), and Cross-Encoder reranking. Empirical benchmarks confirm "
-        f"high context precision, sub-50ms retrieval latency, and verified claim groundedness"
-        + (f" across {expansion_context}." if expansion_context else ".")
-    )
+    hyde_doc = f"{cleaned_input} {core_subject} {expansion_context}".strip()
 
     clarity_before = min(78, max(38, 42 + len(extracted_entities) * 6))
     clarity_after = min(98, clarity_before + 24)
-
-    active_model_label = (
-        os.path.basename(config.get("offlineModelPath", ""))
-        if provider == "offline_gguf" and config.get("offlineModelPath")
-        else (model_name or "Qwen2.5-3B-Reshaper-Core")
-    )
 
     return {
         "originalPrompt": cleaned_input,
@@ -488,8 +600,8 @@ def reshape_user_prompt(
         "hydeDocument": hyde_doc,
         "extractedEntities": extracted_entities,
         "reasoningTrace": (
-            f"Stripped conversational ambiguity, identified [{detected_intent}] intent, anchored "
-            f"{len(extracted_entities)} domain entities, and synthesized a 3-way sub-query decomposition plus a HyDE dense vector anchor."
+            f"Identified [{detected_intent}] intent and anchored {len(extracted_entities)} key prompt entities "
+            f"({', '.join(extracted_entities[:5]) or cleaned_input}) for hybrid retrieval."
         ),
         "modelUsed": active_model_label,
         "providerUsed": provider,
@@ -499,128 +611,208 @@ def reshape_user_prompt(
     }
 
 
+def _build_extractive_direct_answer(
+    original_prompt: str,
+    retrieved_chunks: List[Dict[str, Any]],
+) -> str:
+    """
+    Intelligent local extractive answer synthesizer (used when no external LLM API key is active).
+    Scores individual sentences across the retrieved chunks against the user's question entities,
+    constructs a direct answer at the top, and lists only relevant supporting excerpts.
+    """
+    prompt_lower = original_prompt.strip().lower()
+    q_keywords = extract_top_keywords(original_prompt, 10)
+    if not q_keywords:
+        q_keywords = [w for w in re.split(r"\W+", prompt_lower) if len(w) >= 2]
+
+    def _clean_chunk_text(raw: str) -> str:
+        lines_out: List[str] = []
+        for ln in raw.strip().split("\n"):
+            s = ln.strip()
+            if (s.startswith("[") and s.endswith("]")) or s.startswith("### "):
+                continue
+            lines_out.append(ln.rstrip())
+        body = "\n".join(lines_out).strip()
+        body = re.sub(r"(\w)-\s+(\w)", r"\1\2", body)
+        body = re.sub(r"\|\s+\|(?=\s*[^-\s|]+\s*\|)", "|\n|", body)
+        body = re.sub(r"\|\s+\|(?=\s*---)", "|\n|", body)
+        return body
+
+    # Filter to chunks that actually match at least 1 prompt keyword (if any matching chunk exists)
+    matching_chunks: List[Tuple[int, Dict[str, Any], int]] = []
+    for idx, ch in enumerate(retrieved_chunks):
+        c_low = ch["content"].lower()
+        hits = sum(1 for kw in q_keywords if kw.lower() in c_low or kw[:4].lower() in c_low)
+        matching_chunks.append((idx + 1, ch, hits))
+
+    has_direct_hits = any(h > 0 for _, _, h in matching_chunks)
+    relevant_pool = (
+        [(src_num, ch, h) for src_num, ch, h in matching_chunks if h > 0]
+        if has_direct_hits
+        else matching_chunks[:2]
+    )
+
+    # Extract and score individual sentences across the relevant chunks
+    scored_sentences: List[Tuple[float, str, int, Dict[str, Any]]] = []
+    for src_num, ch, chunk_hits in relevant_pool:
+        clean_text = _clean_chunk_text(ch["content"])
+        raw_sents = re.split(r"(?<=[.!?])\s+|\n+", clean_text)
+        for sent in raw_sents:
+            s_clean = sent.strip()
+            if len(s_clean) < 18:
+                continue
+            s_low = s_clean.lower()
+            kw_hits = sum(1 for kw in q_keywords if kw.lower() in s_low or kw[:4].lower() in s_low)
+            if kw_hits > 0 or not has_direct_hits:
+                score = kw_hits * 3.0 + ch["rerankScore"] + (0.4 if ":" in s_clean else 0.0)
+                scored_sentences.append((score, s_clean, src_num, ch))
+
+    scored_sentences.sort(key=lambda x: x[0], reverse=True)
+
+    # Deduplicate top sentences
+    top_sentences: List[Tuple[str, int, Dict[str, Any]]] = []
+    seen_norm: set = set()
+    for _, sent, src_num, ch in scored_sentences:
+        norm = re.sub(r"\W+", "", sent.lower())[:80]
+        if norm not in seen_norm:
+            seen_norm.add(norm)
+            top_sentences.append((sent, src_num, ch))
+        if len(top_sentences) >= 3:
+            break
+
+    is_yes_no = bool(re.match(r"^(does|do|is|are|can|will|has|have|should|am)\b", prompt_lower))
+    primary_src_num, primary_ch, primary_hits = relevant_pool[0]
+    primary_doc = primary_ch["documentTitle"]
+    primary_sec = primary_ch["sectionPath"].split(">")[-1].strip()
+
+    out_lines: List[str] = []
+
+    if is_yes_no and has_direct_hits and top_sentences:
+        best_sent, best_src, _ = top_sentences[0]
+        has_negation = bool(re.search(r"\b(not covered|excluded|no cashless|does not cover|ineligible)\b", best_sent, re.I))
+        verdict = "No / Restricted" if has_negation else "Yes"
+        out_lines.append(
+            f"**{verdict}** — according to **{primary_doc}** (*{primary_sec}*), your document specifies the following for **{original_prompt.strip('? ')}**:"
+        )
+        out_lines.append("")
+        for sent, s_num, _ in top_sentences[:2]:
+            out_lines.append(f"- {sent} `[Source {s_num}]`")
+        out_lines.append("")
+    elif top_sentences:
+        out_lines.append(
+            f"Based on **{primary_doc}** (*{primary_sec}*), here is the direct answer to your question:"
+        )
+        out_lines.append("")
+        for sent, s_num, _ in top_sentences[:3]:
+            out_lines.append(f"- {sent} `[Source {s_num}]`")
+        out_lines.append("")
+
+    out_lines.append("#### Supporting Document Evidence")
+    out_lines.append("")
+    for src_num, ch, _ in relevant_pool[:3]:
+        sec_title = ch["sectionPath"].split(">")[-1].strip() if ">" in ch["sectionPath"] else ch["sectionPath"]
+        body = _clean_chunk_text(ch["content"])
+        if not body:
+            continue
+        out_lines.append(f"**[Source {src_num}: {ch['documentTitle']} — {sec_title}]**")
+        out_lines.append("")
+        out_lines.append(body)
+        out_lines.append("")
+
+    return "\n".join(out_lines).strip()
+
+
 def synthesize_answer_and_verify(
     prompt_reshape: Dict[str, Any],
     retrieved_chunks: List[Dict[str, Any]],
     pruned_noise_chunks: List[Dict[str, Any]],
     config: Dict[str, Any],
     timings: Dict[str, int],
+    user_documents: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     t_gen = time.time()
+    original_prompt = prompt_reshape["originalPrompt"]
 
-    citations = []
-    for idx, ch in enumerate(retrieved_chunks):
-        tag = f"[Source {idx + 1}: {ch['documentTitle']}]"
-        clean_excerpt = re.sub(r"^(\[.*?\]|###.*?)\n", "", ch["content"]).strip()
-        citations.append({
-            "citationTag": tag,
-            "chunkId": ch["chunkId"],
-            "documentTitle": ch["documentTitle"],
-            "sectionPath": ch["sectionPath"],
-            "excerpt": clean_excerpt[:220] + ("..." if len(clean_excerpt) > 220 else ""),
-            "relevanceScore": ch["rerankScore"],
-        })
+    # Handle conversational greetings ("Hi", "Hello", "What can you do?") naturally
+    if prompt_reshape.get("detectedIntent") == "CONVERSATIONAL_GREETING":
+        docs = user_documents or []
+        custom_docs = [
+            d for d in docs
+            if not any(
+                s in d.get("id", "")
+                for s in (
+                    "doc_hnsw_architecture",
+                    "doc_chunking_optimization",
+                    "doc_agentic_reshaper_ocr",
+                    "doc_small_llm_crag_ocr",
+                    "seed_01",
+                    "seed_02",
+                    "seed_03",
+                )
+            )
+        ]
+        active_docs = custom_docs if custom_docs else docs
+        doc_names = [f"**{d.get('title') or d.get('filename')}**" for d in active_docs[:5]]
+        docs_summary = ", ".join(doc_names) if doc_names else "your indexed knowledge base"
 
-    context_block = "\n\n---\n\n".join(
-        f"[Source {idx + 1}: {ch['documentTitle']} | Section: {ch['sectionPath']} | Rerank Score: {ch['rerankScore'] * 100:.1f}%]\n"
-        f"{ch['content']}"
-        for idx, ch in enumerate(retrieved_chunks)
-    )
-
-    gen_provider = config.get("generatorProvider", "builtin_local")
-    gen_model = config.get("generatorModel", "Llama-3.1-8B-Instruct-Q4_K_M")
-
-    external_ans = call_external_llm_if_available(
-        provider=gen_provider,
-        model=gen_model,
-        system_prompt=(
-            "You are a precision technical Python RAG synthesis engine. Answer the user's question strictly using "
-            "the provided Retrieved Context Sources. Cite every factual claim inline using [Source X] notation. "
-            "Never use emojis."
-        ),
-        user_prompt=(
-            f"Original Question: {prompt_reshape['originalPrompt']}\n"
-            f"Reshaped Technical Query: {prompt_reshape['reshapedPrimaryQuery']}\n\n"
-            f"Retrieved Context:\n{context_block}"
-        ),
-        config=config,
-    )
-
-    if external_ans and len(external_ans.strip()) > 40:
-        answer = external_ans.strip()
+        greeting_answer = (
+            f"Hello! I am **RAG_BUDDY**, your Agentic RAG Assistant.\n\n"
+            f"Your workspace currently has **{len(active_docs)} active document(s)** ready for querying: {docs_summary}.\n\n"
+            f"Ask me any specific question about your documents (for example, coverage clauses, procedures, numbers, or summaries) "
+            f"and I will retrieve the exact sections and answer directly with citations."
+        )
+        retrieved_chunks = []
+        citations: List[Dict[str, Any]] = []
+        answer = greeting_answer
     else:
-        if not retrieved_chunks:
-            answer = (
-                "No indexed document chunks passed the CRAG relevance threshold for this query. "
-                "Try lowering the CRAG filter threshold or ingesting relevant documents into the Vector DB."
-            )
+        citations = []
+        for idx, ch in enumerate(retrieved_chunks):
+            tag = f"[Source {idx + 1}: {ch['documentTitle']}]"
+            clean_excerpt = re.sub(r"^(\[.*?\]|###.*?)\n", "", ch["content"]).strip()
+            citations.append({
+                "citationTag": tag,
+                "chunkId": ch["chunkId"],
+                "documentTitle": ch["documentTitle"],
+                "sectionPath": ch["sectionPath"],
+                "excerpt": clean_excerpt[:220] + ("..." if len(clean_excerpt) > 220 else ""),
+                "relevanceScore": ch["rerankScore"],
+            })
+
+        context_block = "\n\n---\n\n".join(
+            f"[Source {idx + 1}: {ch['documentTitle']} | Section: {ch['sectionPath']} | Rerank Score: {ch['rerankScore'] * 100:.1f}%]\n"
+            f"{ch['content']}"
+            for idx, ch in enumerate(retrieved_chunks)
+        )
+
+        gen_provider = config.get("generatorProvider", "builtin_local")
+        gen_model = config.get("generatorModel", "Llama-3.1-8B-Instruct-Q4_K_M")
+
+        external_ans = call_external_llm_if_available(
+            provider=gen_provider,
+            model=gen_model,
+            system_prompt=(
+                "You are RAG_BUDDY, a helpful and precise RAG assistant. "
+                "Directly answer the user's question first in clear, natural language using ONLY the relevant Retrieved Context Sources. "
+                "Ignore any context sources that are unrelated to the user's question. "
+                "Cite every factual claim inline using [Source X] notation. Never use emojis."
+            ),
+            user_prompt=(
+                f"User Question: {original_prompt}\n\n"
+                f"Retrieved Context Sources:\n{context_block}"
+            ),
+            config=config,
+        )
+
+        if external_ans and len(external_ans.strip()) > 20:
+            answer = external_ans.strip()
         else:
-            def format_chunk_body(raw: str) -> Tuple[str, str]:
-                """
-                Extracts a clean section heading and restores multi-line Markdown structures
-                (tables, numbered lists, bullet points, paragraphs) for Gemini/ChatGPT-style rendering.
-                """
-                lines_in = raw.strip().split("\n")
-                cleaned_lines: List[str] = []
-                extracted_header = ""
-                for ln in lines_in:
-                    s = ln.strip()
-                    if not s:
-                        cleaned_lines.append("")
-                        continue
-                    if (s.startswith("[") and s.endswith("]")) or s.startswith("### "):
-                        if not extracted_header:
-                            extracted_header = s.strip("[]# ").strip()
-                        continue
-                    cleaned_lines.append(ln.rstrip())
-
-                body_text = "\n".join(cleaned_lines).strip()
-                # If a table was joined onto a single line, split adjacent table rows '| |' onto new lines
-                body_text = re.sub(r"\|\s+\|(?=\s*[^-\s|]+\s*\|)", "|\n|", body_text)
-                body_text = re.sub(r"\|\s+\|(?=\s*---)", "|\n|", body_text)
-                # Ensure inline numbered list items (e.g. ": 1. Foo. 2. Bar.") break cleanly onto separate lines
-                body_text = re.sub(r"(?<=[:.])\s+(\d+\.\s+[A-Z])", r"\n\1", body_text)
-                # Ensure a standalone '1.\nText' stays together on one line '1. Text'
-                body_text = re.sub(r"(^|\n)(\d+\.)\s*\n+\s*", r"\1\2 ", body_text)
-                body_text = re.sub(r"\n{3,}", "\n\n", body_text)
-                return extracted_header, body_text
-
-            # Group top retrieved chunks to answer all facets of the user's question naturally
-            lines: List[str] = []
-            top_c = retrieved_chunks[0]
-
-            lines.append(
-                f"Here is a grounded synthesis based on **{len(retrieved_chunks)} verified knowledge chunks** "
-                f"retrieved via HNSW vector search, BM25+ lexical matching, and Cross-Encoder reranking:"
-            )
-            lines.append("")
-
-            for idx, ch in enumerate(retrieved_chunks[:3]):
-                raw_sec = ch["sectionPath"].split(">")[-1].strip() if ">" in ch["sectionPath"] else ch["sectionPath"]
-                sec_title = re.sub(r"^\d+\.\s*", "", raw_sec).strip()
-                _, formatted_body = format_chunk_body(ch["content"])
-                if not formatted_body:
-                    continue
-
-                lines.append(f"### {idx + 1}. {sec_title}")
-                lines.append("")
-                lines.append(formatted_body)
-                lines.append("")
-                lines.append(f"`[Source {idx + 1}: {ch['documentTitle']} — {sec_title}]`")
-                lines.append("")
-
-            delta_str = f"+{top_c['rankDelta']}" if top_c["rankDelta"] >= 0 else str(top_c["rankDelta"])
-            lines.extend([
-                "---",
-                "#### Agentic Retrieval & Verification Telemetry",
-                "",
-                "| Pipeline Stage | Winning Configuration | Score / Telemetry |",
-                "| --- | --- | --- |",
-                f"| **Small LLM Prompt Reshaper** | `{prompt_reshape['modelUsed']}` (`{prompt_reshape['detectedIntent']}`) | Clarity `{prompt_reshape['clarityScoreBefore']}% -> {prompt_reshape['clarityScoreAfter']}%` |",
-                f"| **Optimal Chunk Strategy** | `{top_c['strategy']}` ({top_c['tokenCount']} tokens) | Rank Promotion `{delta_str}` |",
-                f"| **Hybrid RRF + Reranker** | Dense `{top_c['denseScore'] * 100:.1f}%` + BM25+ `{top_c['sparseScore'] * 100:.1f}%` | Cross-Encoder `{top_c['rerankScore'] * 100:.1f}%` (`{top_c['cragGrade']}`) |",
-            ])
-            answer = "\n".join(lines)
+            if not retrieved_chunks:
+                answer = (
+                    "No indexed document sections matched this query. "
+                    "Try rephrasing your question or uploading the relevant document in Document & OCR Ingest."
+                )
+            else:
+                answer = _build_extractive_direct_answer(original_prompt, retrieved_chunks)
 
     answer_gen_ms = max(14, int(round((time.time() - t_gen) * 1000)))
 
