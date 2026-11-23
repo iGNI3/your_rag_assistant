@@ -866,6 +866,17 @@ def _build_extractive_direct_answer(
             out_lines.append(f"- {sent} `[Source {s_num}]`")
         out_lines.append("")
 
+    if top_sentences:
+        out_lines.append("#### Summary Table of Matched Clauses")
+        out_lines.append("")
+        out_lines.append("| Source | Document Section | Extracted Rule / Finding |")
+        out_lines.append("| --- | --- | --- |")
+        for sent, s_num, ch_obj in top_sentences[:3]:
+            sec_short = ch_obj["sectionPath"].split(">")[-1].strip() if ">" in ch_obj["sectionPath"] else ch_obj["sectionPath"]
+            safe_sent = sent.replace("|", "/").replace("\n", " ").strip()
+            out_lines.append(f"| `[Source {s_num}]` | {sec_short} | {safe_sent} |")
+        out_lines.append("")
+
     out_lines.append("#### Supporting Document Evidence")
     out_lines.append("")
     for src_num, ch, _ in relevant_pool[:3]:
@@ -980,10 +991,10 @@ def synthesize_answer_and_verify(
                 "NEVER just say 'it is not mentioned' and stop. Instead, proactively connect their question to the governing clauses in the Retrieved Context "
                 "(for example: how Refractive Error / Eye Surgery thresholds, Cosmetic or Plastic Surgery exclusions like Code Excl08, "
                 "Day Care coverages, Pre-Existing Disease / Specified Procedure waiting periods like 30-day or 2-year rules, or Group Policy waiting-period waivers apply).\n"
-                "3. **Structured, Explanatory Breakdown**: Organize your explanation clearly with bold subheadings or bullet points covering:\n"
+                "3. **Structured, Explanatory Breakdown + Markdown Table View**: Organize your explanation clearly with bold subheadings, bullet points, AND a clean **Markdown Summary Table** (`| Clause / Dimension | Rule / Details in Document | Status / Value | Source |`) summarizing the governing clauses, exclusion codes, waiting periods, limits, or technical specs:\n"
                 "   - **Eligibility / Coverage Verdict**\n"
-                "   - **Governing Policy Clauses & Exclusions Found in Your Document** (quote or explain exact clause numbers, exclusion codes, sub-limits, and waiting periods)\n"
-                "   - **Timeline / Waiting Period Impact** (if the user asked about 'next month', 'immediately', etc.)\n"
+                "   - **Summary Table of Governing Clauses & Rules** (use standard Markdown pipe table syntax `| ... | ... |` with `[Source X]` in the Source column)\n"
+                "   - **Detailed Policy & Waiting Period Analysis** (explain exact clause numbers, exclusion codes, sub-limits, and timeline impact)\n"
                 "   - **Actionable Next Steps** (what to verify in their Schedule or how to file Cashless Pre-Authorization / Reimbursement based on the document)\n"
                 "4. **Inline Citations & Clean Formatting**: Cite every document fact inline using `[Source X]` notation. "
                 "Ignore unrelated sources. Never use emojis."

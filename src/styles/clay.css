@@ -1924,3 +1924,64 @@ table {
     border-radius: 16px;
   }
 }
+
+/* Structured Table View in Full Document Reader & Chat Markdown */
+.doc-reader-table-wrap {
+  margin: 12px 0;
+  overflow-x: auto;
+  border-radius: 16px;
+  border: 1.5px solid var(--clay-border-light);
+  background-color: var(--clay-surface-alt);
+  box-shadow: var(--shadow-clay-sm);
+}
+
+.doc-reader-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.87rem;
+  line-height: 1.58;
+}
+
+.doc-reader-table thead tr {
+  background-color: var(--clay-well-deep);
+  text-align: left;
+}
+
+.doc-reader-table th {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--ink-primary);
+  padding: 10px 14px;
+  border-bottom: 1.5px solid var(--clay-border-light);
+  white-space: nowrap;
+}
+
+.doc-reader-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(164, 152, 138, 0.22);
+  color: var(--ink-secondary);
+  vertical-align: top;
+}
+
+.doc-reader-table tbody tr:nth-child(even) {
+  background-color: var(--clay-surface);
+}
+
+.doc-reader-table tbody tr:nth-child(odd) {
+  background-color: var(--clay-surface-alt);
+}
+
+.doc-reader-table tbody tr.doc-table-row-highlighted {
+  background-color: rgba(242, 165, 65, 0.28) !important;
+}
+
+.doc-reader-table tbody tr.doc-table-row-highlighted td {
+  color: var(--ink-primary);
+  font-weight: 600;
+}
+
+.doc-reader-table tbody tr.doc-table-row-highlighted td:first-child {
+  border-left: 4px solid var(--clay-terracotta);
+}
+

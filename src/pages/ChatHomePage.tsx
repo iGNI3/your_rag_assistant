@@ -100,7 +100,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
-  const highlightedChunkRef = useRef<HTMLDivElement | null>(null);
+  const highlightedChunkRef = useRef<HTMLElement | null>(null);
 
   // Order history chronologically (oldest -> newest) like ChatGPT / Gemini
   const visibleTurns = [...queryHistory]
@@ -1140,9 +1140,9 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
             t = t.replace(/(Policy Clause Number)\s+(?=\d)/g, '$1\n');
             t = t.replace(/\s+("?Following are covered)/g, '\n$1');
             t = t.replace(/\s+(Section\s+[A-Z]\s*[-–:])/g, '\n\n$1');
-            // Numbered clauses / rows (e.g. "1. Name...", "2. Policy...", "1. Inpatient...")
+            // Numbered clauses / rows (e.g. "1. Name...", "2. Policy...", "1. Inpatient...", '"1. Initial Waiting Period...')
             t = t.replace(
-              /([A-Za-z0-9)"'\]%])\s+((?:[1-9]|1\d|2[0-5])\.\s+[A-Z"(])/g,
+              /([A-Za-z0-9)"'\]%])\s+"?((?:[1-9]|1\d|2[0-5])\.\s+[A-Z"(])/g,
               '$1\n$2'
             );
             // Numbered sub-items without dot after "Cover" or sentence end (e.g. "1 Modification...", "2 Modification...")
@@ -1165,11 +1165,278 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
               '$1\n\n$2'
             );
             t = t.replace(
+              /(Waiting period and exclusions)\s+(?=\d)/gi,
+              '$1\n'
+            );
+            t = t.replace(
               /([.!?)"'])\s+(Financial Limits of the Coverage|Financial Limits of the Coverag\s*e)/gi,
               '$1\n\n$2'
             );
             t = t.replace(/\n{3,}/g, '\n\n');
             return t.trim();
+          };
+
+          interface OffsetLine {
+            text: string;
+            trimmed: string;
+            start: number;
+            end: number;
+          }
+
+          interface ParsedTableRow {
+            cells: string[];
+            start: number;
+            end: number;
+          }
+
+          type PageContentBlock =
+            | {
+                kind: 'paragraph';
+                lines: OffsetLine[];
+              }
+            | {
+                kind: 'table';
+                headers: string[];
+                rows: ParsedTableRow[];
+              };
+
+          const parseStructuredTableRow = (
+            trimmed: string
+          ): { cells: string[]; headersHint: string[] } | null => {
+            if (!trimmed) return null;
+
+            // 1. CIS / Policy Schedule Known Field Rows (e.g. "1. Name of Insurance Product/ Policy Group Mediclaim Policy")
+            const cisMatch = trimmed.match(
+              /^["']?(\d{1,2})\.\s+(Name of Insurance Product\/\s*Policy|Policy Number|Type of Insurance Product\/\s*Policy|Sum Insured\s*\(Basis\)|Policy Coverage\s*\(What the Policy Covers\)|Policy Coverage|Exclusions\s*\(what the policy does not cover\)|Waitin\s*g\s*period|Waiting\s*period|Financial Limits of the\s*Coverag\s*e|Financial Limits of the\s*Coverage|Claims\/\s*Claims Procedure|Policy Servicing|Grievances\/\s*Complaints|Things to remember|Your Obligations)\s*(.*)$/i
+            );
+            if (cisMatch) {
+              const num = `${cisMatch[1]}.`;
+              const fieldTitle = cisMatch[2].replace(/\s+/g, ' ').trim();
+              const desc =
+                cisMatch[3].replace(/^["']+|["']+$/g, '').trim() ||
+                'See detailed sub-clauses below';
+              return {
+                cells: [num, fieldTitle, desc],
+                headersHint: [
+                  'Sl. No.',
+                  'Policy Clause / Title',
+                  'Description & Coverage Details',
+                ],
+              };
+            }
+
+            // 2. Numbered or Lettered Colon-Separated Clause / Exclusion / Waiting Period Rows
+            // e.g. "1. Investigation & Evaluation: (Code Excl04)", "1. Initial Waiting Period: Not applicable", "a. For Cashless Service: ..."
+            const colonRowMatch = trimmed.match(
+              /^["']?((?:[1-9]|1\d|2[0-5])\.|[a-f]\.)\s+([^:]{2,85}):\s*(.+)$/
+            );
+            if (colonRowMatch) {
+              const num = colonRowMatch[1];
+              const clauseTitle = colonRowMatch[2].trim();
+              const details = colonRowMatch[3]
+                .replace(/^["']+|["']+$/g, '')
+                .trim();
+              return {
+                cells: [num, clauseTitle, details],
+                headersHint: ['No.', 'Clause / Category', 'Rule / Details'],
+              };
+            }
+
+            // 3. Numbered Benefit / Provision Item Rows (e.g. "1. Inpatient care", "1 Modification of Pre-hospitalization...")
+            const numItemMatch = trimmed.match(
+              /^["']?(?:((?:[1-9]|1\d|2[0-5])\.)|([1-9])(?=\s+(?:Modification|Emergency|Air|External|Inpatient|Organ|Day|Pre-|Post-|Modern|Initial|Specified|Domiciliary|Maternity|Ambulance|Ayush|Bariatric)\b))\s+(.+)$/
+            );
+            if (numItemMatch && trimmed.length <= 165) {
+              const num = numItemMatch[1] || `${numItemMatch[2]}.`;
+              const itemText = numItemMatch[3]
+                .replace(/^["']+|["']+$/g, '')
+                .trim();
+              return {
+                cells: [num, itemText],
+                headersHint: ['No.', 'Covered Benefit / Policy Provision'],
+              };
+            }
+
+            return null;
+          };
+
+          const parsePageIntoBlocks = (body: string): PageContentBlock[] => {
+            const offsetLines: OffsetLine[] = [];
+            let cursor = 0;
+            const rawLines = body.split('\n');
+            for (const ln of rawLines) {
+              const start = cursor;
+              const end = cursor + ln.length;
+              offsetLines.push({
+                text: ln,
+                trimmed: ln.trim(),
+                start,
+                end,
+              });
+              cursor = end + 1;
+            }
+
+            const blocks: PageContentBlock[] = [];
+            let paraBuffer: OffsetLine[] = [];
+
+            const flushPara = () => {
+              if (paraBuffer.length > 0) {
+                blocks.push({ kind: 'paragraph', lines: paraBuffer });
+                paraBuffer = [];
+              }
+            };
+
+            let idx = 0;
+            while (idx < offsetLines.length) {
+              const cur = offsetLines[idx];
+
+              // Case 1: Markdown Pipe Table (| Col 1 | Col 2 |)
+              if (
+                cur.trimmed.startsWith('|') &&
+                cur.trimmed.includes('|', 1)
+              ) {
+                const pipeLines: OffsetLine[] = [];
+                while (
+                  idx < offsetLines.length &&
+                  offsetLines[idx].trimmed.startsWith('|')
+                ) {
+                  pipeLines.push(offsetLines[idx]);
+                  idx++;
+                }
+                if (pipeLines.length >= 2) {
+                  flushPara();
+                  const splitPipe = (s: string) =>
+                    s
+                      .replace(/^\|/, '')
+                      .replace(/\|$/, '')
+                      .split('|')
+                      .map((c) => c.trim());
+                  const headers = splitPipe(pipeLines[0].trimmed);
+                  const rows: ParsedTableRow[] = pipeLines
+                    .slice(1)
+                    .filter((pl) => !/^\|[\s\-:|]+\|$/.test(pl.trimmed))
+                    .map((pl) => ({
+                      cells: splitPipe(pl.trimmed),
+                      start: pl.start,
+                      end: pl.end,
+                    }));
+                  blocks.push({ kind: 'table', headers, rows });
+                  continue;
+                } else {
+                  paraBuffer.push(...pipeLines);
+                  continue;
+                }
+              }
+
+              // Case 2: CIS Table Header Line ("Sl. No. Title Description ... Policy Clause Number")
+              const isCisHeaderLine = /^Sl\.\s*No\.\s+Title\s+Description/i.test(
+                cur.trimmed
+              );
+              if (isCisHeaderLine) {
+                const tableRows: ParsedTableRow[] = [];
+                let look = idx + 1;
+                while (look < offsetLines.length) {
+                  const candidate = offsetLines[look];
+                  if (!candidate.trimmed) {
+                    look++;
+                    continue;
+                  }
+                  const parsed = parseStructuredTableRow(candidate.trimmed);
+                  if (parsed) {
+                    tableRows.push({
+                      cells:
+                        parsed.cells.length === 2
+                          ? [parsed.cells[0], parsed.cells[1], '']
+                          : parsed.cells,
+                      start: candidate.start,
+                      end: candidate.end,
+                    });
+                    look++;
+                  } else {
+                    break;
+                  }
+                }
+                if (tableRows.length >= 1) {
+                  flushPara();
+                  // Include header line offset in first row if highlighted
+                  tableRows[0].start = Math.min(cur.start, tableRows[0].start);
+                  blocks.push({
+                    kind: 'table',
+                    headers: [
+                      'Sl. No.',
+                      'Policy Clause / Title',
+                      'Description & Coverage Details',
+                    ],
+                    rows: tableRows,
+                  });
+                  idx = look;
+                  continue;
+                }
+              }
+
+              // Case 3: Structured Numbered / Colon / CIS Table Rows (2+ consecutive rows or 1 CIS row)
+              const firstParsed = parseStructuredTableRow(cur.trimmed);
+              if (firstParsed) {
+                const collected: Array<{
+                  cells: string[];
+                  headersHint: string[];
+                  start: number;
+                  end: number;
+                }> = [
+                  {
+                    ...firstParsed,
+                    start: cur.start,
+                    end: cur.end,
+                  },
+                ];
+                let look = idx + 1;
+                while (look < offsetLines.length) {
+                  const nextLn = offsetLines[look];
+                  if (!nextLn.trimmed) {
+                    break;
+                  }
+                  const nextParsed = parseStructuredTableRow(nextLn.trimmed);
+                  if (
+                    nextParsed &&
+                    nextParsed.cells.length === firstParsed.cells.length
+                  ) {
+                    collected.push({
+                      ...nextParsed,
+                      start: nextLn.start,
+                      end: nextLn.end,
+                    });
+                    look++;
+                  } else {
+                    break;
+                  }
+                }
+
+                if (
+                  collected.length >= 2 ||
+                  firstParsed.headersHint[0] === 'Sl. No.' ||
+                  firstParsed.cells.length === 3
+                ) {
+                  flushPara();
+                  blocks.push({
+                    kind: 'table',
+                    headers: firstParsed.headersHint,
+                    rows: collected.map((c) => ({
+                      cells: c.cells,
+                      start: c.start,
+                      end: c.end,
+                    })),
+                  });
+                  idx = look;
+                  continue;
+                }
+              }
+
+              paraBuffer.push(cur);
+              idx++;
+            }
+
+            flushPara();
+            return blocks;
           };
 
           // Word-token sequence locator that finds the exact [charStart, charEnd] of a cited chunk
@@ -1304,6 +1571,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
           }
 
           if (parsedOriginalPages.length === 0) {
+            const rawByHeading: Array<{ heading: string; parts: string[] }> = [];
             for (const sec of renderSections) {
               const cleanHeading = extractCleanHeading(
                 sec.sectionPath,
@@ -1311,17 +1579,21 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
               );
               const cleanText = stripSyntheticChunkHeader(sec.content);
               if (!cleanText) continue;
-              const last = parsedOriginalPages[parsedOriginalPages.length - 1];
+              const last = rawByHeading[rawByHeading.length - 1];
               if (!last || last.heading !== cleanHeading) {
-                parsedOriginalPages.push({
+                rawByHeading.push({
                   heading: cleanHeading,
-                  formattedBody: restoreDocumentStructure(cleanText),
+                  parts: [cleanText],
                 });
               } else {
-                last.formattedBody = restoreDocumentStructure(
-                  `${last.formattedBody}\n${cleanText}`
-                );
+                last.parts.push(cleanText);
               }
+            }
+            for (const grp of rawByHeading) {
+              parsedOriginalPages.push({
+                heading: grp.heading,
+                formattedBody: restoreDocumentStructure(grp.parts.join(' ')),
+              });
             }
           }
 
@@ -1552,6 +1824,9 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                       const isTargetPage =
                         gIdx === matchedPageIdx && matchedCharRange !== null;
                       const body = pageGroup.formattedBody;
+                      const pageBlocks = parsePageIntoBlocks(body);
+                      let highlightRefAttached = false;
+                      let highlightBadgeAttached = false;
 
                       return (
                         <section
@@ -1564,30 +1839,154 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                             </div>
                           )}
 
-                          <div className="full-document-continuous-prose">
-                            {isTargetPage && matchedCharRange ? (
-                              <>
-                                <span>
-                                  {body.slice(0, matchedCharRange[0])}
-                                </span>
-                                <mark
-                                  ref={highlightedChunkRef}
-                                  className="doc-inline-highlight"
+                          {pageBlocks.map((block, bIdx) => {
+                            if (block.kind === 'table') {
+                              return (
+                                <div
+                                  key={`tbl-${bIdx}`}
+                                  className="doc-reader-table-wrap"
                                 >
-                                  <span className="doc-inline-highlight-badge">
-                                    SOURCE #{sourceIndex + 1}
-                                  </span>
-                                  {body.slice(
-                                    matchedCharRange[0],
-                                    matchedCharRange[1]
-                                  )}
-                                </mark>
-                                <span>{body.slice(matchedCharRange[1])}</span>
-                              </>
-                            ) : (
-                              <span>{body}</span>
-                            )}
-                          </div>
+                                  <table className="doc-reader-table">
+                                    <thead>
+                                      <tr>
+                                        {block.headers.map((h, hIdx) => (
+                                          <th key={hIdx}>{h}</th>
+                                        ))}
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {block.rows.map((row, rIdx) => {
+                                        const isRowHighlighted =
+                                          isTargetPage &&
+                                          matchedCharRange !== null &&
+                                          row.end > matchedCharRange[0] &&
+                                          row.start < matchedCharRange[1];
+
+                                        let attachRowRef = false;
+                                        let showBadgeInRow = false;
+                                        if (isRowHighlighted) {
+                                          if (!highlightRefAttached) {
+                                            attachRowRef = true;
+                                            highlightRefAttached = true;
+                                          }
+                                          if (!highlightBadgeAttached) {
+                                            showBadgeInRow = true;
+                                            highlightBadgeAttached = true;
+                                          }
+                                        }
+
+                                        return (
+                                          <tr
+                                            key={rIdx}
+                                            ref={(el) => {
+                                              if (attachRowRef && el) {
+                                                (
+                                                  highlightedChunkRef as React.MutableRefObject<HTMLElement | null>
+                                                ).current = el;
+                                              }
+                                            }}
+                                            className={
+                                              isRowHighlighted
+                                                ? 'doc-table-row-highlighted'
+                                                : undefined
+                                            }
+                                          >
+                                            {block.headers.map((_, cIdx) => (
+                                              <td
+                                                key={cIdx}
+                                                style={{
+                                                  fontWeight:
+                                                    cIdx === 0 ? 700 : undefined,
+                                                  whiteSpace:
+                                                    cIdx === 0
+                                                      ? 'nowrap'
+                                                      : undefined,
+                                                }}
+                                              >
+                                                {cIdx === 0 &&
+                                                  showBadgeInRow && (
+                                                    <span className="doc-inline-highlight-badge">
+                                                      SOURCE #{sourceIndex + 1}
+                                                    </span>
+                                                  )}
+                                                {row.cells[cIdx] || ''}
+                                              </td>
+                                            ))}
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            }
+
+                            // Paragraph block
+                            const bStart = block.lines[0].start;
+                            const bEnd =
+                              block.lines[block.lines.length - 1].end;
+                            const blockText = body.slice(bStart, bEnd);
+                            const overlapsHighlight =
+                              isTargetPage &&
+                              matchedCharRange !== null &&
+                              bEnd > matchedCharRange[0] &&
+                              bStart < matchedCharRange[1];
+
+                            if (overlapsHighlight && matchedCharRange) {
+                              const relStart = Math.max(
+                                0,
+                                matchedCharRange[0] - bStart
+                              );
+                              const relEnd = Math.min(
+                                blockText.length,
+                                matchedCharRange[1] - bStart
+                              );
+                              let attachMarkRef = false;
+                              let showBadgeInMark = false;
+                              if (!highlightRefAttached) {
+                                attachMarkRef = true;
+                                highlightRefAttached = true;
+                              }
+                              if (!highlightBadgeAttached) {
+                                showBadgeInMark = true;
+                                highlightBadgeAttached = true;
+                              }
+
+                              return (
+                                <div
+                                  key={`para-${bIdx}`}
+                                  className="full-document-continuous-prose"
+                                >
+                                  <span>{blockText.slice(0, relStart)}</span>
+                                  <mark
+                                    ref={(el) => {
+                                      if (attachMarkRef && el) {
+                                        highlightedChunkRef.current = el;
+                                      }
+                                    }}
+                                    className="doc-inline-highlight"
+                                  >
+                                    {showBadgeInMark && (
+                                      <span className="doc-inline-highlight-badge">
+                                        SOURCE #{sourceIndex + 1}
+                                      </span>
+                                    )}
+                                    {blockText.slice(relStart, relEnd)}
+                                  </mark>
+                                  <span>{blockText.slice(relEnd)}</span>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div
+                                key={`para-${bIdx}`}
+                                className="full-document-continuous-prose"
+                              >
+                                <span>{blockText}</span>
+                              </div>
+                            );
+                          })}
                         </section>
                       );
                     })}

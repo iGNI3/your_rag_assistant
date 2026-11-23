@@ -134,6 +134,34 @@ function renderInlineTokens(
   });
 }
 
+function normalizeContentForTables(rawContent: string): string {
+  let t = rawContent.replace(/\r\n/g, '\n');
+  // Break inline PDF CIS table headers & numbered rows onto separate lines if present in quoted evidence
+  t = t.replace(/([.!?])\s+(Sl\.\s*No\.\s+Title\s+Description)/gi, '$1\n$2');
+  t = t.replace(/(Policy Clause Number)\s+(?=\d{1,2}\.\s)/gi, '$1\n');
+  t = t.replace(
+    /([A-Za-z0-9)"'\]%])\s+"?((?:[1-9]|1\d|2[0-5])\.\s+(?:Name of Insurance|Policy Number|Type of Insurance|Sum Insured|Policy Coverage|Exclusions|Waitin\s*g?\s*period|Financial Limits|Claims\/|Policy Servicing|Grievances\/|Things to remember|Your Obligations|Investigation|Rest Cure|Obesity|Change-of-Gender|Cosmetic|Hazardous|Breach of law|Maternity|Excluded Providers|Initial Waiting|Pre-Existing|Specified disease))/gi,
+    '$1\n$2'
+  );
+  return t;
+}
+
+function isPipeTableSeparator(line: string): boolean {
+  const s = line.trim();
+  if (!s.includes('|') || !s.includes('-')) return false;
+  return /^\|?[\s\-:|]+\|[\s\-:|]+\|?$/.test(s);
+}
+
+function isPipeTableRow(line: string, nextLine?: string): boolean {
+  const s = line.trim();
+  if (!s || s.startsWith('```') || s.startsWith('#')) return false;
+  if (s.startsWith('|') && s.includes('|', 1)) return true;
+  if (s.includes('|') && nextLine && isPipeTableSeparator(nextLine)) {
+    return true;
+  }
+  return false;
+}
+
 export const RichMarkdownRenderer: React.FC<RichMarkdownRendererProps> = ({
   content,
   onSelectCitationTag,
@@ -142,7 +170,7 @@ export const RichMarkdownRenderer: React.FC<RichMarkdownRendererProps> = ({
 
   if (!content) return null;
 
-  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const lines = normalizeContentForTables(content).split('\n');
   const elements: React.ReactNode[] = [];
   let i = 0;
 
@@ -257,23 +285,40 @@ export const RichMarkdownRenderer: React.FC<RichMarkdownRendererProps> = ({
       continue;
     }
 
-    // 3. Markdown Pipe Table (| Col 1 | Col 2 |)
-    if (trimmed.startsWith('|') && trimmed.includes('|', 1)) {
+    // 3. Markdown Pipe Table (| Col 1 | Col 2 | or Col 1 | Col 2)
+    if (isPipeTableRow(trimmed, lines[i + 1])) {
       const tableLines: string[] = [];
-      while (i < lines.length && lines[i].trim().startsWith('|')) {
-        tableLines.push(lines[i].trim());
-        i++;
+      while (i < lines.length) {
+        const curTrim = lines[i].trim();
+        if (!curTrim) {
+          if (i + 1 < lines.length && lines[i + 1].trim().includes('|')) {
+            i++;
+            continue;
+          }
+          break;
+        }
+        if (curTrim.includes('|') && !curTrim.startsWith('#')) {
+          tableLines.push(curTrim);
+          i++;
+        } else {
+          break;
+        }
       }
 
       if (tableLines.length >= 2) {
-        // Check if last cell has trailing citation outside table
         let trailingCitation = '';
         const parseRow = (rowStr: string): string[] => {
-          const citationMatch = rowStr.match(/(\*\*\[Source[^\]]+\]\*\*|`\[Source[^\]]+\]`|\[Source[^\]]+\])\s*$/);
-          let cleanedRow = rowStr;
-          if (citationMatch) {
-            trailingCitation = citationMatch[1];
-            cleanedRow = rowStr.replace(citationMatch[0], '').trim();
+          let cleanedRow = rowStr.trim();
+          // Only extract trailing citation if it sits outside a closing pipe "| [Source 1]"
+          const trailingAfterPipe = cleanedRow.match(
+            /\|\s*(\*\*\[Source[^\]]+\]\*\*|`\[Source[^\]]+\]`|\[Source[^\]]+\])\s*$/
+          );
+          if (trailingAfterPipe) {
+            trailingCitation = trailingAfterPipe[1];
+            cleanedRow = cleanedRow.slice(
+              0,
+              cleanedRow.length - trailingAfterPipe[0].length + 1
+            );
           }
           return cleanedRow
             .replace(/^\|/, '')
@@ -285,43 +330,17 @@ export const RichMarkdownRenderer: React.FC<RichMarkdownRendererProps> = ({
         const headerCells = parseRow(tableLines[0]);
         const bodyRows = tableLines
           .slice(1)
-          .filter((r) => !/^\|[\s\-:|]+\|$/.test(r))
+          .filter((r) => !isPipeTableSeparator(r))
           .map(parseRow);
 
         elements.push(
-          <div
-            key={`tbl-${i}`}
-            style={{ margin: '16px 0', overflowX: 'auto' }}
-          >
-            <div
-              className="clay-well"
-              style={{ padding: 6, borderRadius: 18 }}
-            >
-              <table
-                style={{
-                  width: '100%',
-                  borderCollapse: 'collapse',
-                  fontSize: '0.86rem',
-                }}
-              >
+          <div key={`tbl-${i}`} style={{ margin: '14px 0' }}>
+            <div className="doc-reader-table-wrap">
+              <table className="doc-reader-table">
                 <thead>
-                  <tr
-                    style={{
-                      backgroundColor: 'var(--clay-well-deep)',
-                      textAlign: 'left',
-                    }}
-                  >
+                  <tr>
                     {headerCells.map((h, hIdx) => (
-                      <th
-                        key={hIdx}
-                        className="font-display"
-                        style={{
-                          padding: '10px 14px',
-                          fontWeight: 700,
-                          fontSize: '0.82rem',
-                          borderBottom: '2px solid rgba(255,255,255,0.5)',
-                        }}
-                      >
+                      <th key={hIdx}>
                         {renderInlineTokens(h, onSelectCitationTag)}
                       </th>
                     ))}
@@ -329,24 +348,9 @@ export const RichMarkdownRenderer: React.FC<RichMarkdownRendererProps> = ({
                 </thead>
                 <tbody>
                   {bodyRows.map((row, rIdx) => (
-                    <tr
-                      key={rIdx}
-                      style={{
-                        backgroundColor:
-                          rIdx % 2 === 0
-                            ? 'var(--clay-surface)'
-                            : 'var(--clay-surface-alt)',
-                      }}
-                    >
+                    <tr key={rIdx}>
                       {headerCells.map((_, cIdx) => (
-                        <td
-                          key={cIdx}
-                          style={{
-                            padding: '10px 14px',
-                            borderBottom:
-                              '1px solid rgba(175, 162, 147, 0.25)',
-                          }}
-                        >
+                        <td key={cIdx}>
                           {renderInlineTokens(
                             row[cIdx] || '',
                             onSelectCitationTag
@@ -363,6 +367,99 @@ export const RichMarkdownRenderer: React.FC<RichMarkdownRendererProps> = ({
                 {renderInlineTokens(trailingCitation, onSelectCitationTag)}
               </div>
             )}
+          </div>
+        );
+        continue;
+      }
+    }
+
+    // 3b. Structured Document / PDF CIS / Exclusion Table Block in Chat
+    const parseChatStructuredRow = (
+      s: string
+    ): { cells: string[]; headers: string[] } | null => {
+      const cisMatch = s.match(
+        /^["']?(\d{1,2})\.\s+(Name of Insurance Product\/\s*Policy|Policy Number|Type of Insurance Product\/\s*Policy|Sum Insured\s*\(Basis\)|Policy Coverage\s*\(What the Policy Covers\)|Policy Coverage|Exclusions\s*\(what the policy does not cover\)|Waitin\s*g?\s*period|Financial Limits of the\s*Coverag\s*e|Claims\/\s*Claims Procedure|Policy Servicing|Grievances\/\s*Complaints|Things to remember|Your Obligations)\s*(.*)$/i
+      );
+      if (cisMatch) {
+        return {
+          cells: [
+            `${cisMatch[1]}.`,
+            cisMatch[2].replace(/\s+/g, ' ').trim(),
+            cisMatch[3].replace(/^["']+|["']+$/g, '').trim() ||
+              'See policy details',
+          ],
+          headers: ['Sl. No.', 'Policy Clause / Field', 'Details'],
+        };
+      }
+      const exclMatch = s.match(
+        /^["']?(\d{1,2})\.\s+([^:]{2,75}):\s*(\(Code[- ]*Excl\d+\).*|Not applicable.*)$/i
+      );
+      if (exclMatch) {
+        return {
+          cells: [`${exclMatch[1]}.`, exclMatch[2].trim(), exclMatch[3].trim()],
+          headers: ['No.', 'Clause / Category', 'Code / Status'],
+        };
+      }
+      return null;
+    };
+
+    const isCisHeaderInChat = /^Sl\.\s*No\.\s+Title\s+Description/i.test(
+      trimmed
+    );
+    const firstChatRow = parseChatStructuredRow(trimmed);
+    if (isCisHeaderInChat || firstChatRow) {
+      let headers = firstChatRow
+        ? firstChatRow.headers
+        : ['Sl. No.', 'Policy Clause / Field', 'Details'];
+      const rows: string[][] = [];
+      if (firstChatRow) {
+        rows.push(firstChatRow.cells);
+      }
+      i++;
+      while (i < lines.length) {
+        const nxt = lines[i].trim();
+        if (!nxt) {
+          i++;
+          continue;
+        }
+        const parsedNxt = parseChatStructuredRow(nxt);
+        if (parsedNxt) {
+          headers = parsedNxt.headers;
+          rows.push(parsedNxt.cells);
+          i++;
+        } else {
+          break;
+        }
+      }
+      if (rows.length >= 1) {
+        elements.push(
+          <div key={`struct-tbl-${i}`} className="doc-reader-table-wrap">
+            <table className="doc-reader-table">
+              <thead>
+                <tr>
+                  {headers.map((h, hIdx) => (
+                    <th key={hIdx}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, rIdx) => (
+                  <tr key={rIdx}>
+                    {headers.map((_, cIdx) => (
+                      <td
+                        key={cIdx}
+                        style={{ fontWeight: cIdx === 0 ? 700 : undefined }}
+                      >
+                        {renderInlineTokens(
+                          r[cIdx] || '',
+                          onSelectCitationTag
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         );
         continue;
