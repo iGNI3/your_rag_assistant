@@ -161,8 +161,18 @@ export interface ComprehensiveMetrics {
   };
 }
 
+export interface ChatSession {
+  chatId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  lastPrompt: string;
+}
+
 export interface AgenticRagResponse {
   queryId: string;
+  chatId?: string;
   timestamp: string;
   promptReshape: PromptReshapeResult;
   retrievedChunks: RetrievedChunkResult[];

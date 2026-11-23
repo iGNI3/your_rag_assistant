@@ -132,7 +132,12 @@ def seed_user_workspace_if_empty(user_id: str):
             )
 
 
-def execute_rag_pipeline(prompt: str, config_used: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+def execute_rag_pipeline(
+    prompt: str,
+    config_used: Dict[str, Any],
+    user_id: str,
+    chat_id: Optional[str] = None,
+) -> Dict[str, Any]:
     all_chunks = vector_db.get_all_chunks(user_id)
     user_docs = vector_db.get_all_documents(user_id)
 
@@ -163,7 +168,11 @@ def execute_rag_pipeline(prompt: str, config_used: Dict[str, Any], user_id: str)
                 corpus_keywords.append(kw)
     corpus_keywords = corpus_keywords[:50]
 
-    recent_history = sql_db.load_query_history(user_id, limit=3)
+    recent_history = (
+        sql_db.load_query_history(user_id, limit=3, chat_id=chat_id)
+        if chat_id
+        else []
+    )
 
     prompt_reshape = reshape_user_prompt(
         prompt,
@@ -204,7 +213,8 @@ def execute_rag_pipeline(prompt: str, config_used: Dict[str, Any], user_id: str)
         "activeConfig": dict(config_used),
     }
 
-    sql_db.record_query_run(resp_obj, user_id=user_id)
+    resolved_chat_id = sql_db.record_query_run(resp_obj, user_id=user_id, chat_id=chat_id)
+    resp_obj["chatId"] = resolved_chat_id
     return resp_obj
 
 
@@ -367,7 +377,8 @@ def get_state():
         for c in vector_db.get_all_chunks(user_id)
     ]
 
-    history = sql_db.load_query_history(user_id, 20)
+    history = sql_db.load_query_history(user_id, 80)
+    chat_sessions = sql_db.list_chat_sessions(user_id)
 
     masked_keys = {}
     for k, val in cfg.get("apiKeys", {}).items():
@@ -385,7 +396,8 @@ def get_state():
         "stats": vector_db.get_vectordb_stats(user_id),
         "config": safe_config,
         "latestQuery": history[0] if history else None,
-        "queryHistory": history[:15],
+        "queryHistory": history,
+        "chatSessions": chat_sessions,
         "savedFindings": sql_db.list_saved_findings(user_id),
         "databaseTelemetry": sql_db.get_database_telemetry(user_id),
         "modelPortalCatalog": OFFLINE_MODEL_PORTAL_CATALOG,
@@ -544,6 +556,59 @@ def reset_corpus():
     })
 
 
+@app.route("/api/chats", methods=["GET"])
+@require_auth
+def get_chats():
+    user_id = g.current_user["userId"]
+    return jsonify({
+        "chatSessions": sql_db.list_chat_sessions(user_id),
+    })
+
+
+@app.route("/api/chats", methods=["POST"])
+@require_auth
+def create_chat():
+    user_id = g.current_user["userId"]
+    body = request.get_json(force=True, silent=True) or {}
+    title = str(body.get("title") or "New Chat").strip() or "New Chat"
+    session = sql_db.create_chat_session(user_id, title=title)
+    return jsonify({
+        "success": True,
+        "chat": session,
+        "chatSessions": sql_db.list_chat_sessions(user_id),
+    })
+
+
+@app.route("/api/chats/<chat_id>", methods=["PATCH"])
+@require_auth
+def rename_chat(chat_id: str):
+    user_id = g.current_user["userId"]
+    body = request.get_json(force=True, silent=True) or {}
+    new_title = str(body.get("title") or "").strip()
+    if not new_title:
+        return jsonify({"error": "Chat title cannot be empty."}), 400
+    updated = sql_db.rename_chat_session(user_id, chat_id, new_title)
+    if not updated:
+        return jsonify({"error": "Chat session not found."}), 404
+    return jsonify({
+        "success": True,
+        "chat": updated,
+        "chatSessions": sql_db.list_chat_sessions(user_id),
+    })
+
+
+@app.route("/api/chats/<chat_id>", methods=["DELETE"])
+@require_auth
+def remove_chat(chat_id: str):
+    user_id = g.current_user["userId"]
+    deleted = sql_db.delete_chat_session(user_id, chat_id)
+    return jsonify({
+        "success": deleted,
+        "chatSessions": sql_db.list_chat_sessions(user_id),
+        "queryHistory": sql_db.load_query_history(user_id, 80),
+    })
+
+
 @app.route("/api/query", methods=["POST"])
 @require_auth
 def query_rag():
@@ -553,6 +618,12 @@ def query_rag():
     prompt = str(body.get("prompt") or "").strip()
     if not prompt:
         return jsonify({"error": "Prompt is required."}), 400
+
+    chat_id = body.get("chatId")
+    if isinstance(chat_id, str):
+        chat_id = chat_id.strip() or None
+    else:
+        chat_id = None
 
     overrides = body.get("configOverrides") or {}
     merged_config = {
@@ -568,7 +639,8 @@ def query_rag():
         },
     }
 
-    resp_obj = execute_rag_pipeline(prompt, merged_config, user_id=user_id)
+    resp_obj = execute_rag_pipeline(prompt, merged_config, user_id=user_id, chat_id=chat_id)
+    resp_obj["chatSessions"] = sql_db.list_chat_sessions(user_id)
     return jsonify(resp_obj)
 
 
@@ -576,8 +648,12 @@ def query_rag():
 @require_auth
 def clear_chat_history():
     user_id = g.current_user["userId"]
-    sql_db.clear_query_history(user_id)
-    return jsonify({"success": True})
+    chat_id = request.args.get("chatId")
+    sql_db.clear_query_history(user_id, chat_id=chat_id)
+    return jsonify({
+        "success": True,
+        "chatSessions": sql_db.list_chat_sessions(user_id),
+    })
 
 
 @app.route("/api/findings", methods=["GET"])

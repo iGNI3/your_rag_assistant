@@ -208,9 +208,20 @@ class PersistentRAGDatabase:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                chat_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS query_runs (
                 query_id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL DEFAULT 'usr_demo_admin',
+                chat_id TEXT,
                 timestamp TEXT NOT NULL,
                 original_prompt TEXT NOT NULL,
                 reshaped_primary_query TEXT NOT NULL,
@@ -254,15 +265,20 @@ class PersistentRAGDatabase:
             for stmt in ddl_statements:
                 conn.execute(stmt)
 
-            # Safe migrations if upgrading an existing local clayrag_vault.sqlite3
+            # Safe migrations if upgrading an existing local clayrag_vault.sqlite3 or Neon PostgreSQL
             self._add_column_if_missing_sqlite(conn, "documents", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
             self._add_column_if_missing_sqlite(conn, "vector_chunks", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
             self._add_column_if_missing_sqlite(conn, "query_runs", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
+            self._add_column_if_missing_sqlite(conn, "query_runs", "chat_id", "TEXT")
             self._add_column_if_missing_sqlite(conn, "saved_findings", "user_id", "TEXT NOT NULL DEFAULT 'usr_demo_admin'")
+            if conn.is_postgres:
+                conn.execute("ALTER TABLE query_runs ADD COLUMN IF NOT EXISTS chat_id TEXT")
 
             conn.execute("CREATE INDEX IF NOT EXISTS idx_docs_user ON documents(user_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_user_doc ON vector_chunks(user_id, document_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_chats_user ON chat_sessions(user_id, updated_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_user ON query_runs(user_id, timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_chat ON query_runs(user_id, chat_id, timestamp)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_findings_user ON saved_findings(user_id, created_at)")
 
     def _ensure_demo_user(self):
@@ -650,20 +666,198 @@ class PersistentRAGDatabase:
                 })
         return docs, chunks
 
-    def record_query_run(self, resp_obj: Dict[str, Any], user_id: str = "usr_demo_admin"):
-        pr = resp_obj["promptReshape"]
-        m = resp_obj["metrics"]
+    def _make_auto_chat_title(self, prompt_text: str) -> str:
+        clean = " ".join((prompt_text or "").strip().split())
+        if not clean:
+            return "New Chat"
+        if len(clean) <= 48:
+            return clean
+        return clean[:45].rstrip(" ,.;:-") + "..."
+
+    def _ensure_legacy_runs_have_chat_session(self, conn: _DualConnection, user_id: str):
+        orphan = conn.execute(
+            "SELECT query_id, timestamp, original_prompt FROM query_runs WHERE user_id = ? AND (chat_id IS NULL OR chat_id = '') ORDER BY timestamp ASC",
+            (user_id,),
+        ).fetchall()
+        if not orphan:
+            return
+        legacy_chat_id = f"chat_legacy_{user_id[-8:]}"
+        first_ts = orphan[0]["timestamp"]
+        last_ts = orphan[-1]["timestamp"]
+        title = self._make_auto_chat_title(orphan[0]["original_prompt"])
+        conn.execute(
+            """
+            INSERT INTO chat_sessions (chat_id, user_id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(chat_id) DO NOTHING
+            """,
+            (legacy_chat_id, user_id, title, first_ts, last_ts),
+        )
+        conn.execute(
+            "UPDATE query_runs SET chat_id = ? WHERE user_id = ? AND (chat_id IS NULL OR chat_id = '')",
+            (legacy_chat_id, user_id),
+        )
+
+    def create_chat_session(self, user_id: str, title: str = "New Chat") -> Dict[str, Any]:
+        clean_title = (title or "New Chat").strip()[:80] or "New Chat"
+        chat_id = f"chat_{int(time.time() * 1000)}_{secrets.token_hex(3)}"
+        now = datetime.now(timezone.utc).isoformat()
         with self._get_conn() as conn:
             conn.execute(
                 """
+                INSERT INTO chat_sessions (chat_id, user_id, title, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (chat_id, user_id, clean_title, now, now),
+            )
+        return {
+            "chatId": chat_id,
+            "title": clean_title,
+            "createdAt": now,
+            "updatedAt": now,
+            "messageCount": 0,
+            "lastPrompt": "",
+        }
+
+    def list_chat_sessions(self, user_id: str = "usr_demo_admin") -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        with self._get_conn() as conn:
+            self._ensure_legacy_runs_have_chat_session(conn, user_id)
+            rows = conn.execute(
+                """
+                SELECT
+                    cs.chat_id,
+                    cs.title,
+                    cs.created_at,
+                    cs.updated_at,
+                    COUNT(qr.query_id) AS msg_count,
+                    MAX(qr.timestamp) AS last_msg_ts
+                FROM chat_sessions cs
+                LEFT JOIN query_runs qr
+                    ON qr.chat_id = cs.chat_id AND qr.user_id = cs.user_id
+                WHERE cs.user_id = ?
+                GROUP BY cs.chat_id, cs.title, cs.created_at, cs.updated_at
+                ORDER BY cs.updated_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+            for r in rows:
+                cid = r["chat_id"]
+                last_row = conn.execute(
+                    "SELECT original_prompt FROM query_runs WHERE user_id = ? AND chat_id = ? ORDER BY timestamp DESC LIMIT 1",
+                    (user_id, cid),
+                ).fetchone()
+                results.append({
+                    "chatId": cid,
+                    "title": r["title"],
+                    "createdAt": r["created_at"],
+                    "updatedAt": r["updated_at"],
+                    "messageCount": int(r["msg_count"] or 0),
+                    "lastPrompt": last_row["original_prompt"] if last_row else "",
+                })
+        return results
+
+    def rename_chat_session(self, user_id: str, chat_id: str, new_title: str) -> Optional[Dict[str, Any]]:
+        clean_title = (new_title or "").strip()[:80]
+        if not clean_title:
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE chat_sessions SET title = ?, updated_at = ? WHERE chat_id = ? AND user_id = ?",
+                (clean_title, now, chat_id, user_id),
+            )
+            if cur.rowcount == 0:
+                return None
+            row = conn.execute(
+                "SELECT chat_id, title, created_at, updated_at FROM chat_sessions WHERE chat_id = ? AND user_id = ?",
+                (chat_id, user_id),
+            ).fetchone()
+            cnt_row = conn.execute(
+                "SELECT COUNT(*) AS c FROM query_runs WHERE user_id = ? AND chat_id = ?",
+                (user_id, chat_id),
+            ).fetchone()
+            last_row = conn.execute(
+                "SELECT original_prompt FROM query_runs WHERE user_id = ? AND chat_id = ? ORDER BY timestamp DESC LIMIT 1",
+                (user_id, chat_id),
+            ).fetchone()
+            return {
+                "chatId": row["chat_id"],
+                "title": row["title"],
+                "createdAt": row["created_at"],
+                "updatedAt": row["updated_at"],
+                "messageCount": int(cnt_row["c"] or 0),
+                "lastPrompt": last_row["original_prompt"] if last_row else "",
+            }
+
+    def delete_chat_session(self, user_id: str, chat_id: str) -> bool:
+        with self._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM query_runs WHERE user_id = ? AND chat_id = ?",
+                (user_id, chat_id),
+            )
+            cur = conn.execute(
+                "DELETE FROM chat_sessions WHERE user_id = ? AND chat_id = ?",
+                (user_id, chat_id),
+            )
+            return cur.rowcount > 0
+
+    def record_query_run(
+        self,
+        resp_obj: Dict[str, Any],
+        user_id: str = "usr_demo_admin",
+        chat_id: Optional[str] = None,
+    ) -> str:
+        pr = resp_obj["promptReshape"]
+        m = resp_obj["metrics"]
+        ts = resp_obj["timestamp"]
+        orig_prompt = pr["originalPrompt"]
+
+        with self._get_conn() as conn:
+            target_chat_id = (chat_id or "").strip() or None
+            if target_chat_id:
+                existing = conn.execute(
+                    "SELECT chat_id, title FROM chat_sessions WHERE chat_id = ? AND user_id = ?",
+                    (target_chat_id, user_id),
+                ).fetchone()
+                if not existing:
+                    target_chat_id = None
+                else:
+                    # Auto-name a "New Chat" session from the user's first message
+                    new_title = (
+                        self._make_auto_chat_title(orig_prompt)
+                        if (existing["title"] or "").strip().lower() in ("new chat", "untitled chat", "")
+                        else existing["title"]
+                    )
+                    conn.execute(
+                        "UPDATE chat_sessions SET title = ?, updated_at = ? WHERE chat_id = ? AND user_id = ?",
+                        (new_title, ts, target_chat_id, user_id),
+                    )
+
+            if not target_chat_id:
+                target_chat_id = f"chat_{int(time.time() * 1000)}_{secrets.token_hex(3)}"
+                auto_title = self._make_auto_chat_title(orig_prompt)
+                conn.execute(
+                    """
+                    INSERT INTO chat_sessions (chat_id, user_id, title, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (target_chat_id, user_id, auto_title, ts, ts),
+                )
+
+            resp_obj["chatId"] = target_chat_id
+
+            conn.execute(
+                """
                 INSERT INTO query_runs (
-                    query_id, user_id, timestamp, original_prompt, reshaped_primary_query,
+                    query_id, user_id, chat_id, timestamp, original_prompt, reshaped_primary_query,
                     detected_intent, answer, overall_optimization_index,
                     groundedness_faithfulness, ndcg_at_k, total_latency_ms,
                     full_response_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(query_id) DO UPDATE SET
                     user_id=excluded.user_id,
+                    chat_id=excluded.chat_id,
                     timestamp=excluded.timestamp,
                     original_prompt=excluded.original_prompt,
                     reshaped_primary_query=excluded.reshaped_primary_query,
@@ -678,8 +872,9 @@ class PersistentRAGDatabase:
                 (
                     resp_obj["queryId"],
                     user_id,
-                    resp_obj["timestamp"],
-                    pr["originalPrompt"],
+                    target_chat_id,
+                    ts,
+                    orig_prompt,
                     pr["reshapedPrimaryQuery"],
                     pr["detectedIntent"],
                     resp_obj["answer"],
@@ -690,18 +885,41 @@ class PersistentRAGDatabase:
                     json.dumps(resp_obj),
                 ),
             )
+        return target_chat_id
 
-    def load_query_history(self, user_id: str = "usr_demo_admin", limit: int = 20) -> List[Dict[str, Any]]:
+    def load_query_history(
+        self,
+        user_id: str = "usr_demo_admin",
+        limit: int = 50,
+        chat_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT full_response_json FROM query_runs WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
-                (user_id, limit),
-            ).fetchall()
-            return [json.loads(r["full_response_json"]) for r in rows]
+            self._ensure_legacy_runs_have_chat_session(conn, user_id)
+            if chat_id:
+                rows = conn.execute(
+                    "SELECT chat_id, full_response_json FROM query_runs WHERE user_id = ? AND chat_id = ? ORDER BY timestamp DESC LIMIT ?",
+                    (user_id, chat_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT chat_id, full_response_json FROM query_runs WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+                    (user_id, limit),
+                ).fetchall()
+            out: List[Dict[str, Any]] = []
+            for r in rows:
+                obj = json.loads(r["full_response_json"])
+                if r["chat_id"] and not obj.get("chatId"):
+                    obj["chatId"] = r["chat_id"]
+                out.append(obj)
+            return out
 
-    def clear_query_history(self, user_id: str = "usr_demo_admin"):
+    def clear_query_history(self, user_id: str = "usr_demo_admin", chat_id: Optional[str] = None):
         with self._get_conn() as conn:
-            conn.execute("DELETE FROM query_runs WHERE user_id = ?", (user_id,))
+            if chat_id:
+                conn.execute("DELETE FROM query_runs WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+            else:
+                conn.execute("DELETE FROM query_runs WHERE user_id = ?", (user_id,))
+                conn.execute("DELETE FROM chat_sessions WHERE user_id = ?", (user_id,))
 
     def save_finding(self, payload: Dict[str, Any], user_id: str = "usr_demo_admin") -> Dict[str, Any]:
         finding_id = payload.get("findingId") or f"fnd_{int(time.time() * 1000)}_{random.randint(100, 999)}"

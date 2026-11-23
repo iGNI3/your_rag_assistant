@@ -18,9 +18,11 @@ import {
   X,
   Eye,
   Compass,
+  Pencil,
 } from 'lucide-react';
 import {
   AgenticRagResponse,
+  ChatSession,
   ChunkStrategyType,
   DocumentChunk,
   IngestedDocument,
@@ -30,11 +32,17 @@ import { RichMarkdownRenderer } from '../components/RichMarkdownRenderer';
 
 interface ChatHomePageProps {
   queryHistory: AgenticRagResponse[];
+  chatSessions?: ChatSession[];
+  activeChatId?: string | null;
   config: RagPipelineConfig;
   documents?: IngestedDocument[];
   chunks?: Array<Omit<DocumentChunk, 'embedding' | 'sparseTerms'>>;
   isExecuting: boolean;
   onExecuteQuery: (prompt: string) => Promise<void>;
+  onCreateChat?: (initialTitle?: string) => Promise<void>;
+  onSelectChat?: (chatId: string) => void;
+  onRenameChat?: (chatId: string, newTitle: string) => Promise<void>;
+  onDeleteChat?: (chatId: string) => Promise<void>;
   onUpdateConfig: (partial: Partial<RagPipelineConfig>) => Promise<void>;
   onUploadFiles: (
     files: FileList,
@@ -71,16 +79,19 @@ const STARTER_PROMPTS = [
 
 export const ChatHomePage: React.FC<ChatHomePageProps> = ({
   queryHistory,
+  chatSessions = [],
+  activeChatId = null,
   config,
   documents = [],
   chunks = [],
   isExecuting,
   onExecuteQuery,
+  onCreateChat,
+  onRenameChat,
   onUpdateConfig,
   onUploadFiles,
   onSaveFindingFromChat,
   onOpenModelsPage,
-  onClearHistory,
 }) => {
   const [promptInput, setPromptInput] = useState<string>('');
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
@@ -95,16 +106,28 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
   } | null>(null);
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
   const [savedTurnId, setSavedTurnId] = useState<string | null>(null);
-  const [clearedAfterTimestamp, setClearedAfterTimestamp] = useState<number>(0);
+  const [isRenamingHeader, setIsRenamingHeader] = useState<boolean>(false);
+  const [headerRenameDraft, setHeaderRenameDraft] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const highlightedChunkRef = useRef<HTMLElement | null>(null);
 
-  // Order history chronologically (oldest -> newest) like ChatGPT / Gemini
+  const activeChatSession = chatSessions.find(
+    (cs) => cs.chatId === activeChatId
+  );
+
+  useEffect(() => {
+    setIsRenamingHeader(false);
+  }, [activeChatId]);
+
+  // Order history chronologically (oldest -> newest) scoped to the active chat session
   const visibleTurns = [...queryHistory]
-    .filter((q) => new Date(q.timestamp).getTime() > clearedAfterTimestamp)
+    .filter((q) => {
+      if (!activeChatId) return false;
+      return q.chatId === activeChatId;
+    })
     .reverse();
 
   // Live elapsed timer & stage progression while LLM is generating an answer
@@ -240,29 +263,95 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            onClick={onOpenModelsPage}
-            className="clay-btn"
-            style={{ padding: '7px 14px', fontSize: '0.78rem' }}
-          >
-            <Cpu size={14} />
-            <span>
-              RESHAPER: {config.reshaperModel} (
-              {config.reshaperProvider.toUpperCase()})
-            </span>
-          </button>
+          {activeChatSession && (
+            isRenamingHeader ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="text"
+                  autoFocus
+                  value={headerRenameDraft}
+                  onChange={(e) => setHeaderRenameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && onRenameChat) {
+                      onRenameChat(activeChatSession.chatId, headerRenameDraft);
+                      setIsRenamingHeader(false);
+                    } else if (e.key === 'Escape') {
+                      setIsRenamingHeader(false);
+                    }
+                  }}
+                  className="clay-input"
+                  style={{
+                    padding: '5px 10px',
+                    fontSize: '0.78rem',
+                    width: 210,
+                    borderRadius: 10,
+                  }}
+                />
+                <button
+                  type="button"
+                  className="clay-btn clay-btn-terracotta"
+                  style={{ padding: '6px 10px', fontSize: '0.72rem' }}
+                  onClick={() => {
+                    if (onRenameChat) {
+                      onRenameChat(activeChatSession.chatId, headerRenameDraft);
+                    }
+                    setIsRenamingHeader(false);
+                  }}
+                >
+                  <Check size={13} />
+                  <span>SAVE</span>
+                </button>
+                <button
+                  type="button"
+                  className="clay-btn"
+                  style={{ padding: '6px 8px', fontSize: '0.72rem' }}
+                  onClick={() => setIsRenamingHeader(false)}
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span
+                  className="clay-tag clay-tag-terracotta"
+                  style={{
+                    maxWidth: 230,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={activeChatSession.title}
+                >
+                  {activeChatSession.title}
+                </span>
+                {onRenameChat && (
+                  <button
+                    type="button"
+                    className="clay-btn"
+                    title="Rename this chat conversation"
+                    style={{ padding: '5px 9px', fontSize: '0.7rem' }}
+                    onClick={() => {
+                      setHeaderRenameDraft(activeChatSession.title);
+                      setIsRenamingHeader(true);
+                    }}
+                  >
+                    <Pencil size={12} />
+                    <span>RENAME</span>
+                  </button>
+                )}
+              </div>
+            )
+          )}
 
           <button
             type="button"
             onClick={onOpenModelsPage}
             className="clay-btn"
-            style={{ padding: '7px 14px', fontSize: '0.78rem' }}
+            style={{ padding: '7px 12px', fontSize: '0.74rem' }}
           >
-            <Layers size={14} />
+            <Layers size={13} />
             <span>
-              SYNTHESIZER: {config.generatorModel} (
-              {config.generatorProvider.toUpperCase()})
+              {config.generatorModel} ({config.generatorProvider.toUpperCase()})
             </span>
           </button>
         </div>
@@ -270,17 +359,16 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
             type="button"
-            className="clay-btn"
-            style={{ padding: '7px 14px', fontSize: '0.76rem' }}
+            className="clay-btn clay-btn-terracotta"
+            style={{ padding: '7px 14px', fontSize: '0.75rem' }}
             onClick={async () => {
-              setClearedAfterTimestamp(Date.now());
-              if (onClearHistory) {
-                await onClearHistory();
+              if (onCreateChat) {
+                await onCreateChat('New Chat');
               }
             }}
           >
-            <RotateCcw size={13} />
-            <span>NEW CHAT VIEW</span>
+            <Plus size={13} />
+            <span>NEW CHAT</span>
           </button>
         </div>
       </div>

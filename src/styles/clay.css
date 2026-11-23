@@ -1985,3 +1985,85 @@ table {
   border-left: 4px solid var(--clay-terracotta);
 }
 
+/* Sidebar Per-User Chat History List with Inline Rename & Delete */
+.sidebar-chat-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 210px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.sidebar-chat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 14px;
+  color: var(--ink-secondary);
+  background-color: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.sidebar-chat-item:hover {
+  background-color: var(--clay-well);
+  color: var(--ink-primary);
+}
+
+.sidebar-chat-item.active {
+  background-color: var(--clay-terracotta);
+  color: var(--ink-on-accent);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+[data-theme='liquid-glass'] .sidebar-chat-item.active {
+  background-color: var(--liquid-obsidian, #1b1c20);
+  color: #ffffff;
+}
+
+.sidebar-chat-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  opacity: 0.72;
+  transition: opacity 0.12s ease;
+}
+
+.sidebar-chat-item:hover .sidebar-chat-actions,
+.sidebar-chat-item.active .sidebar-chat-actions {
+  opacity: 1;
+}
+
+.sidebar-chat-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  border: none;
+  background-color: rgba(128, 128, 128, 0.16);
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 0.12s ease;
+}
+
+.sidebar-chat-action-btn:hover {
+  background-color: rgba(128, 128, 128, 0.32);
+}
+
+.sidebar-chat-item.active .sidebar-chat-action-btn {
+  background-color: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.sidebar-chat-item.active .sidebar-chat-action-btn:hover {
+  background-color: rgba(255, 255, 255, 0.32);
+}
+
+

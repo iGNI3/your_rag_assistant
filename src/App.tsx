@@ -19,9 +19,14 @@ import {
   User,
   Menu,
   X,
+  Plus,
+  Pencil,
+  Trash2,
+  Check,
 } from 'lucide-react';
 import {
   AgenticRagResponse,
+  ChatSession,
   ChunkStrategyType,
   DatabaseTelemetry,
   DocumentChunk,
@@ -205,6 +210,10 @@ export const App: React.FC = () => {
     null
   );
   const [queryHistory, setQueryHistory] = useState<AgenticRagResponse[]>([]);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState<string>('');
   const [savedFindings, setSavedFindings] = useState<SavedFinding[]>([]);
   const [databaseTelemetry, setDatabaseTelemetry] =
     useState<DatabaseTelemetry | null>(null);
@@ -263,6 +272,8 @@ export const App: React.FC = () => {
     setConfig(null);
     setLatestQuery(null);
     setQueryHistory([]);
+    setChatSessions([]);
+    setActiveChatId(null);
     setSavedFindings([]);
     setDatabaseTelemetry(null);
   };
@@ -285,6 +296,12 @@ export const App: React.FC = () => {
       setConfig(data.config || null);
       setLatestQuery(data.latestQuery || null);
       setQueryHistory(data.queryHistory || []);
+      const sessions: ChatSession[] = data.chatSessions || [];
+      setChatSessions(sessions);
+      setActiveChatId((prev) => {
+        if (prev && sessions.some((s) => s.chatId === prev)) return prev;
+        return sessions.length > 0 ? sessions[0].chatId : null;
+      });
       setSavedFindings(data.savedFindings || []);
       setDatabaseTelemetry(data.databaseTelemetry || null);
       setModelCatalog(data.modelPortalCatalog || []);
@@ -332,6 +349,65 @@ export const App: React.FC = () => {
     navigateToPage('chat');
   };
 
+  const handleCreateChat = async (initialTitle = 'New Chat') => {
+    const resp = await authFetch('/api/chats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: initialTitle }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      setChatSessions(data.chatSessions || []);
+      if (data.chat?.chatId) {
+        setActiveChatId(data.chat.chatId);
+      }
+      navigateToPage('chat');
+      setStatusMessage('NEW CHAT SESSION CREATED');
+    }
+  };
+
+  const handleSelectChat = (chatId: string) => {
+    setActiveChatId(chatId);
+    setRenamingChatId(null);
+    navigateToPage('chat');
+  };
+
+  const handleRenameChat = async (chatId: string, newTitle: string) => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) {
+      setRenamingChatId(null);
+      return;
+    }
+    const resp = await authFetch(`/api/chats/${chatId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: trimmed }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      setChatSessions(data.chatSessions || []);
+      setStatusMessage(`CHAT RENAMED TO "${trimmed.toUpperCase()}"`);
+    }
+    setRenamingChatId(null);
+  };
+
+  const handleDeleteChat = async (chatId: string) => {
+    const resp = await authFetch(`/api/chats/${chatId}`, {
+      method: 'DELETE',
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      const updatedSessions: ChatSession[] = data.chatSessions || [];
+      setChatSessions(updatedSessions);
+      setQueryHistory(data.queryHistory || []);
+      setActiveChatId((prev) => {
+        if (prev !== chatId) return prev;
+        return updatedSessions.length > 0 ? updatedSessions[0].chatId : null;
+      });
+      setStatusMessage('CHAT SESSION DELETED');
+    }
+  };
+
   const handleExecuteQuery = async (prompt: string) => {
     setIsExecuting(true);
     setStatusMessage('RESHAPING PROMPT & TRAVERSING HNSW...');
@@ -344,12 +420,22 @@ export const App: React.FC = () => {
       const resp = await authFetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          prompt,
+          chatId: activeChatId || undefined,
+        }),
       });
       if (resp.ok) {
-        const result: AgenticRagResponse = await resp.json();
+        const result: AgenticRagResponse & { chatSessions?: ChatSession[] } =
+          await resp.json();
         setLatestQuery(result);
-        setQueryHistory((prev) => [result, ...prev.slice(0, 14)]);
+        if (result.chatId) {
+          setActiveChatId(result.chatId);
+        }
+        if (result.chatSessions) {
+          setChatSessions(result.chatSessions);
+        }
+        setQueryHistory((prev) => [result, ...prev]);
         await fetchFullState();
         setStatusMessage(
           `ANSWER SYNTHESIZED IN ${result.metrics.latencyBreakdown.totalMs} MS`
@@ -833,6 +919,159 @@ export const App: React.FC = () => {
                 </div>
               ))}
             </nav>
+
+            {/* Persistent Per-User Chat History with Create, Switch, Rename & Delete */}
+            <div style={{ marginTop: 14 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 6,
+                }}
+              >
+                <span className="sidebar-group-title" style={{ margin: 0 }}>
+                  CHAT HISTORY ({chatSessions.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleCreateChat('New Chat')}
+                  className="clay-btn"
+                  title="Start a new chat conversation"
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: '0.64rem',
+                    gap: 4,
+                  }}
+                >
+                  <Plus size={11} />
+                  <span>NEW</span>
+                </button>
+              </div>
+
+              <div className="sidebar-chat-history-list">
+                {chatSessions.length === 0 ? (
+                  <div
+                    className="font-mono"
+                    style={{
+                      fontSize: '0.67rem',
+                      color: 'var(--ink-muted)',
+                      padding: '8px 10px',
+                      borderRadius: 12,
+                      backgroundColor: 'var(--clay-well)',
+                    }}
+                  >
+                    No saved chats yet. Ask a question or click NEW.
+                  </div>
+                ) : (
+                  chatSessions.map((cs) => {
+                    const isCurrent =
+                      activePage === 'chat' && activeChatId === cs.chatId;
+                    const isRenaming = renamingChatId === cs.chatId;
+
+                    if (isRenaming) {
+                      return (
+                        <div
+                          key={cs.chatId}
+                          className="sidebar-chat-item active"
+                          style={{ padding: '6px 8px', gap: 6 }}
+                        >
+                          <input
+                            type="text"
+                            autoFocus
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                handleRenameChat(cs.chatId, renameDraft);
+                              } else if (e.key === 'Escape') {
+                                setRenamingChatId(null);
+                              }
+                            }}
+                            className="clay-input"
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              padding: '4px 8px',
+                              fontSize: '0.73rem',
+                              borderRadius: 8,
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleRenameChat(cs.chatId, renameDraft)
+                            }
+                            className="sidebar-chat-action-btn"
+                            title="Save chat name"
+                          >
+                            <Check size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRenamingChatId(null)}
+                            className="sidebar-chat-action-btn"
+                            title="Cancel rename"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={cs.chatId}
+                        className={`sidebar-chat-item ${
+                          isCurrent ? 'active' : ''
+                        }`}
+                        onClick={() => handleSelectChat(cs.chatId)}
+                      >
+                        <MessageSquare size={13} style={{ flexShrink: 0 }} />
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            fontSize: '0.76rem',
+                            fontWeight: isCurrent ? 700 : 600,
+                          }}
+                          title={cs.title}
+                        >
+                          {cs.title}
+                        </span>
+                        <div
+                          className="sidebar-chat-actions"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            className="sidebar-chat-action-btn"
+                            title="Rename chat"
+                            onClick={() => {
+                              setRenamingChatId(cs.chatId);
+                              setRenameDraft(cs.title);
+                            }}
+                          >
+                            <Pencil size={11} />
+                          </button>
+                          <button
+                            type="button"
+                            className="sidebar-chat-action-btn"
+                            title="Delete chat"
+                            onClick={() => handleDeleteChat(cs.chatId)}
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Bottom User Account & Vault Telemetry Card */}
@@ -1002,17 +1241,25 @@ export const App: React.FC = () => {
                 {activePage === 'chat' && (
                   <ChatHomePage
                     queryHistory={queryHistory}
+                    chatSessions={chatSessions}
+                    activeChatId={activeChatId}
                     config={config}
                     documents={documents}
                     chunks={chunks}
                     isExecuting={isExecuting}
                     onExecuteQuery={handleExecuteQuery}
+                    onCreateChat={handleCreateChat}
+                    onSelectChat={handleSelectChat}
+                    onRenameChat={handleRenameChat}
+                    onDeleteChat={handleDeleteChat}
                     onUpdateConfig={handleUpdateConfig}
                     onUploadFiles={handleUploadFiles}
                     onClearHistory={async () => {
-                      await authFetch('/api/query/history', { method: 'DELETE' });
-                      setQueryHistory([]);
-                      setLatestQuery(null);
+                      const qs = activeChatId ? `?chatId=${activeChatId}` : '';
+                      await authFetch(`/api/query/history${qs}`, {
+                        method: 'DELETE',
+                      });
+                      await fetchFullState();
                     }}
                     onSaveFindingFromChat={async (turn) => {
                       await handleSaveFinding({
