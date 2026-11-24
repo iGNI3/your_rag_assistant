@@ -442,6 +442,30 @@ class SecurityAuditIntegrationTests(unittest.TestCase):
         self.assertEqual(a2["perDocumentMetrics"], [])
         self.assertEqual(a2["queryTokenTimeline"], [])
 
+        # 3. Date & time filtering on GET /api/analytics
+        past_r = c_u1.get("/api/analytics?start=2020-01-01&end=2020-01-31", headers=h1)
+        self.assertEqual(past_r.status_code, 200)
+        past_data = past_r.get_json()
+        self.assertEqual(past_data["corpusTotals"]["totalDocuments"], 0)
+        self.assertEqual(past_data["corpusTotals"]["totalChunks"], 0)
+        self.assertEqual(past_data["tokenTotals"]["totalQueries"], 0)
+        self.assertEqual(past_data["tokenTotals"]["totalTokens"], 0)
+
+        wide_r = c_u1.get("/api/analytics?start=2020-01-01T00:00:00Z&end=2035-01-01T00:00:00Z", headers=h1)
+        self.assertEqual(wide_r.status_code, 200)
+        wide_data = wide_r.get_json()
+        self.assertEqual(wide_data["corpusTotals"]["totalDocuments"], 2)
+        self.assertEqual(wide_data["tokenTotals"]["totalQueries"], 1)
+        self.assertIsNotNone(wide_data["appliedRange"]["startAt"])
+        self.assertIsNotNone(wide_data["appliedRange"]["endAt"])
+
+        # Malformed or inverted date ranges return HTTP 400
+        self.assertEqual(c_u1.get("/api/analytics?start=not-a-date", headers=h1).status_code, 400)
+        self.assertEqual(
+            c_u1.get("/api/analytics?start=2026-12-01&end=2026-01-01", headers=h1).status_code,
+            400,
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

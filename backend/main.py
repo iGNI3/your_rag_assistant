@@ -559,7 +559,13 @@ def get_state():
 @require_auth
 def get_user_analytics_route():
     user_id = g.current_user["userId"]
-    return jsonify(sql_db.get_user_analytics(user_id))
+    start_at = (request.args.get("start") or "").strip() or None
+    end_at = (request.args.get("end") or "").strip() or None
+    try:
+        data = sql_db.get_user_analytics(user_id, start_at=start_at, end_at=end_at)
+    except ValueError as exc:
+        return jsonify({"error": f"Invalid date/time filter: {exc}"}), 400
+    return jsonify(data)
 
 
 @app.route("/api/ingest/upload", methods=["POST"])

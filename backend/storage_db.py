@@ -1416,17 +1416,60 @@ class PersistentRAGDatabase:
             ],
         }
 
-    def get_user_analytics(self, user_id: str = "usr_demo_admin") -> Dict[str, Any]:
+    @staticmethod
+    def _parse_utc_datetime(raw_val: Optional[str], end_of_day_if_date_only: bool = False) -> Optional[datetime]:
+        if raw_val is None:
+            return None
+        s = str(raw_val).strip()
+        if not s:
+            return None
+        date_only = bool(re.match(r"^\d{4}-\d{2}-\d{2}$", s))
+        if date_only:
+            dt = datetime.fromisoformat(s + ("T23:59:59.999999+00:00" if end_of_day_if_date_only else "T00:00:00+00:00"))
+            return dt.astimezone(timezone.utc)
+        norm = s[:-1] + "+00:00" if s.endswith(("Z", "z")) else s
+        dt = datetime.fromisoformat(norm)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    def get_user_analytics(
+        self,
+        user_id: str = "usr_demo_admin",
+        start_at: Optional[str] = None,
+        end_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Computes strictly per-user corpus, chunking technique, extraction/OCR, and
-        LLM token usage analytics across documents, vector_chunks, and query_runs.
+        LLM token usage analytics across documents, vector_chunks, and query_runs,
+        optionally filtered to a [start_at, end_at] UTC date/time window.
         """
+        start_dt = self._parse_utc_datetime(start_at, end_of_day_if_date_only=False)
+        end_dt = self._parse_utc_datetime(end_at, end_of_day_if_date_only=True)
+        if start_dt and end_dt and start_dt > end_dt:
+            raise ValueError("Start date/time must be earlier than or equal to end date/time.")
+
+        def _in_range(ts_raw: Optional[str]) -> bool:
+            if not start_dt and not end_dt:
+                return True
+            try:
+                dt = self._parse_utc_datetime(ts_raw)
+            except Exception:
+                return False
+            if dt is None:
+                return False
+            if start_dt and dt < start_dt:
+                return False
+            if end_dt and dt > end_dt:
+                return False
+            return True
+
         def _est_tok(txt: str) -> int:
             s = (txt or "").strip()
             return max(1, (len(s) + 3) // 4) if s else 0
 
         with self._get_conn() as conn:
-            doc_rows = conn.execute(
+            all_doc_rows = conn.execute(
                 """
                 SELECT id, title, filename, format, ingested_at, selected_strategy,
                        auto_optimized, extraction_telemetry_json, chunk_count
@@ -1437,7 +1480,7 @@ class PersistentRAGDatabase:
                 (user_id,),
             ).fetchall()
 
-            chunk_rows = conn.execute(
+            all_chunk_rows = conn.execute(
                 """
                 SELECT document_id, token_count, coherence_score, information_density, strategy
                 FROM vector_chunks
@@ -1446,7 +1489,7 @@ class PersistentRAGDatabase:
                 (user_id,),
             ).fetchall()
 
-            run_rows = conn.execute(
+            all_run_rows = conn.execute(
                 """
                 SELECT query_id, timestamp, original_prompt, answer, total_latency_ms,
                        groundedness_faithfulness, full_response_json
@@ -1456,6 +1499,15 @@ class PersistentRAGDatabase:
                 """,
                 (user_id,),
             ).fetchall()
+
+        doc_rows = [d for d in all_doc_rows if _in_range(d["ingested_at"])]
+        matched_doc_ids = {d["id"] for d in doc_rows}
+        chunk_rows = (
+            [ch for ch in all_chunk_rows if ch["document_id"] in matched_doc_ids]
+            if (start_dt or end_dt)
+            else all_chunk_rows
+        )
+        run_rows = [r for r in all_run_rows if _in_range(r["timestamp"])]
 
         # Aggregate chunk stats per document
         doc_chunk_agg: Dict[str, Dict[str, Any]] = {}
@@ -1641,6 +1693,10 @@ class PersistentRAGDatabase:
         provider_breakdown = sorted(provider_map.values(), key=lambda x: -x["totalTokens"])
 
         return {
+            "appliedRange": {
+                "startAt": start_dt.isoformat() if start_dt else None,
+                "endAt": end_dt.isoformat() if end_dt else None,
+            },
             "corpusTotals": {
                 "totalDocuments": len(doc_rows),
                 "totalChunks": len(chunk_rows),

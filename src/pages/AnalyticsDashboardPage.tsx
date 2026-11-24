@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   ArrowUpRight,
   X,
+  Calendar,
 } from 'lucide-react';
 import {
   RagPipelineConfig,
@@ -26,7 +27,7 @@ interface AnalyticsDashboardPageProps {
   analytics: UserAnalyticsSummary | null;
   config: RagPipelineConfig;
   isRefreshing?: boolean;
-  onRefresh: () => Promise<void> | void;
+  onRefresh: (startIso?: string | null, endIso?: string | null) => Promise<void> | void;
   onNavigate: (page: AppPageId) => void;
 }
 
@@ -357,6 +358,32 @@ const InteractiveDonutChart: React.FC<{
   );
 };
 
+function toLocalDateTimeInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
+}
+
+function formatReadableRange(startIso: string | null, endIso: string | null): string {
+  const fmt = (iso: string) => {
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return iso;
+    return dt.toLocaleString(undefined, {
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+  if (startIso && endIso) return `${fmt(startIso)} → ${fmt(endIso)}`;
+  if (startIso) return `From ${fmt(startIso)}`;
+  if (endIso) return `Until ${fmt(endIso)}`;
+  return 'All Time';
+}
+
+type DatePresetId = 'all' | 'today' | '24h' | '7d' | '30d' | 'custom';
+
 export const AnalyticsDashboardPage: React.FC<AnalyticsDashboardPageProps> = ({
   analytics,
   config,
@@ -364,6 +391,13 @@ export const AnalyticsDashboardPage: React.FC<AnalyticsDashboardPageProps> = ({
   onRefresh,
   onNavigate,
 }) => {
+  const [datePreset, setDatePreset] = useState<DatePresetId>('all');
+  const [customStart, setCustomStart] = useState<string>('');
+  const [customEnd, setCustomEnd] = useState<string>('');
+  const [appliedStartIso, setAppliedStartIso] = useState<string | null>(null);
+  const [appliedEndIso, setAppliedEndIso] = useState<string | null>(null);
+  const [rangeError, setRangeError] = useState<string | null>(null);
+
   const [strategyMetricMode, setStrategyMetricMode] = useState<'docs' | 'chunks'>(
     'chunks'
   );
@@ -379,6 +413,76 @@ export const AnalyticsDashboardPage: React.FC<AnalyticsDashboardPageProps> = ({
     'newest' | 'chunks' | 'tokens' | 'coherence'
   >('chunks');
   const [hoveredTrendIdx, setHoveredTrendIdx] = useState<number | null>(null);
+
+  const applyDatePreset = (preset: DatePresetId) => {
+    setRangeError(null);
+    setDatePreset(preset);
+    if (preset === 'custom') {
+      if (!customStart) {
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        setCustomStart(toLocalDateTimeInputValue(startOfToday));
+      }
+      if (!customEnd) {
+        setCustomEnd(toLocalDateTimeInputValue(new Date()));
+      }
+      return;
+    }
+
+    const now = new Date();
+    let start: Date | null = null;
+    let end: Date | null = null;
+
+    if (preset === 'today') {
+      start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      end = now;
+    } else if (preset === '24h') {
+      start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      end = now;
+    } else if (preset === '7d') {
+      start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      end = now;
+    } else if (preset === '30d') {
+      start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      end = now;
+    }
+
+    const sIso = start ? start.toISOString() : null;
+    const eIso = end ? end.toISOString() : null;
+    setAppliedStartIso(sIso);
+    setAppliedEndIso(eIso);
+    if (start) setCustomStart(toLocalDateTimeInputValue(start));
+    if (end) setCustomEnd(toLocalDateTimeInputValue(end));
+    onRefresh(sIso, eIso);
+  };
+
+  const handleApplyCustomRange = (e: React.FormEvent) => {
+    e.preventDefault();
+    setRangeError(null);
+    const startDt = customStart ? new Date(customStart) : null;
+    const endDt = customEnd ? new Date(customEnd) : null;
+
+    if (startDt && Number.isNaN(startDt.getTime())) {
+      setRangeError('Please enter a valid start date & time.');
+      return;
+    }
+    if (endDt && Number.isNaN(endDt.getTime())) {
+      setRangeError('Please enter a valid end date & time.');
+      return;
+    }
+    if (startDt && endDt && startDt.getTime() > endDt.getTime()) {
+      setRangeError('Start date/time must be earlier than end date/time.');
+      return;
+    }
+
+    const sIso = startDt ? startDt.toISOString() : null;
+    const eIso = endDt ? endDt.toISOString() : null;
+    setDatePreset(sIso || eIso ? 'custom' : 'all');
+    setAppliedStartIso(sIso);
+    setAppliedEndIso(eIso);
+    onRefresh(sIso, eIso);
+  };
 
   const corpus = analytics?.corpusTotals || {
     totalDocuments: 0,
@@ -632,7 +736,7 @@ export const AnalyticsDashboardPage: React.FC<AnalyticsDashboardPageProps> = ({
           type="button"
           className="clay-btn"
           style={{ padding: '7px 14px', fontSize: '0.76rem' }}
-          onClick={() => onRefresh()}
+          onClick={() => onRefresh(appliedStartIso, appliedEndIso)}
           disabled={isRefreshing}
         >
           <RefreshCw
@@ -643,6 +747,185 @@ export const AnalyticsDashboardPage: React.FC<AnalyticsDashboardPageProps> = ({
           />
           <span>{isRefreshing ? 'REFRESHING...' : 'REFRESH METRICS'}</span>
         </button>
+      </div>
+
+      {/* Date & Time Range Filter Bar */}
+      <div
+        className="clay-card"
+        style={{
+          padding: '16px 20px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span
+              className="font-mono"
+              style={{
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                color: 'var(--ink-primary)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <Calendar size={14} />
+              <span>DATE &amp; TIME FILTER</span>
+            </span>
+            <span className="clay-tag" style={{ fontSize: '0.66rem' }}>
+              {formatReadableRange(
+                analytics?.appliedRange?.startAt ?? appliedStartIso,
+                analytics?.appliedRange?.endAt ?? appliedEndIso
+              )}
+            </span>
+          </div>
+
+          <div
+            className="clay-well"
+            style={{
+              padding: 4,
+              borderRadius: 999,
+              display: 'flex',
+              gap: 4,
+              flexWrap: 'wrap',
+            }}
+          >
+            {(
+              [
+                { id: 'all', label: 'ALL TIME' },
+                { id: 'today', label: 'TODAY' },
+                { id: '24h', label: 'LAST 24H' },
+                { id: '7d', label: 'LAST 7D' },
+                { id: '30d', label: 'LAST 30D' },
+                { id: 'custom', label: 'CUSTOM' },
+              ] as Array<{ id: DatePresetId; label: string }>
+            ).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`clay-btn ${
+                  datePreset === p.id ? 'clay-btn-terracotta' : ''
+                }`}
+                style={{ padding: '5px 11px', fontSize: '0.68rem' }}
+                onClick={() => applyDatePreset(p.id)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <form
+          onSubmit={handleApplyCustomRange}
+          style={{
+            display: 'flex',
+            alignItems: 'flex-end',
+            gap: 10,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ flex: '1 1 210px', minWidth: 190 }}>
+            <label
+              className="font-mono"
+              style={{
+                display: 'block',
+                fontSize: '0.66rem',
+                fontWeight: 700,
+                color: 'var(--ink-muted)',
+                marginBottom: 4,
+              }}
+            >
+              FROM (DATE &amp; TIME)
+            </label>
+            <input
+              type="datetime-local"
+              className="clay-input font-mono"
+              value={customStart}
+              onChange={(e) => {
+                setCustomStart(e.target.value);
+                setDatePreset('custom');
+                setRangeError(null);
+              }}
+              style={{ padding: '7px 10px', fontSize: '0.76rem' }}
+            />
+          </div>
+
+          <div style={{ flex: '1 1 210px', minWidth: 190 }}>
+            <label
+              className="font-mono"
+              style={{
+                display: 'block',
+                fontSize: '0.66rem',
+                fontWeight: 700,
+                color: 'var(--ink-muted)',
+                marginBottom: 4,
+              }}
+            >
+              TO (DATE &amp; TIME)
+            </label>
+            <input
+              type="datetime-local"
+              className="clay-input font-mono"
+              value={customEnd}
+              onChange={(e) => {
+                setCustomEnd(e.target.value);
+                setDatePreset('custom');
+                setRangeError(null);
+              }}
+              style={{ padding: '7px 10px', fontSize: '0.76rem' }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="submit"
+              className="clay-btn clay-btn-terracotta"
+              style={{ padding: '8px 16px', fontSize: '0.74rem' }}
+              disabled={isRefreshing}
+            >
+              APPLY RANGE
+            </button>
+            {(appliedStartIso || appliedEndIso || customStart || customEnd) && (
+              <button
+                type="button"
+                className="clay-btn"
+                style={{ padding: '8px 12px', fontSize: '0.74rem' }}
+                onClick={() => {
+                  setCustomStart('');
+                  setCustomEnd('');
+                  applyDatePreset('all');
+                }}
+              >
+                <X size={13} />
+                <span>CLEAR</span>
+              </button>
+            )}
+          </div>
+        </form>
+
+        {rangeError && (
+          <div
+            className="font-mono"
+            style={{
+              fontSize: '0.74rem',
+              fontWeight: 700,
+              color: 'var(--clay-terracotta)',
+            }}
+          >
+            {rangeError}
+          </div>
+        )}
       </div>
 
       {/* Top 4 Bento KPI Cards */}

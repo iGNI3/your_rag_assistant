@@ -302,10 +302,17 @@ export const App: React.FC = () => {
     setAnalyticsSummary(null);
   };
 
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = async (
+    startIso?: string | null,
+    endIso?: string | null
+  ) => {
     setIsRefreshingAnalytics(true);
     try {
-      const resp = await authFetch('/api/analytics');
+      const params = new URLSearchParams();
+      if (startIso) params.set('start', startIso);
+      if (endIso) params.set('end', endIso);
+      const qs = params.toString();
+      const resp = await authFetch(`/api/analytics${qs ? `?${qs}` : ''}`);
       if (resp.ok) {
         setAnalyticsSummary(await resp.json());
       }

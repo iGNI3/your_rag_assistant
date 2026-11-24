@@ -410,6 +410,10 @@ export interface QueryTokenTimelinePoint {
 }
 
 export interface UserAnalyticsSummary {
+  appliedRange?: {
+    startAt: string | null;
+    endAt: string | null;
+  };
   corpusTotals: {
     totalDocuments: number;
     totalChunks: number;
