@@ -820,18 +820,29 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--clay-well);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(90, 145, 175, 0.45);
-  border-radius: 8px;
+  background-color: rgba(124, 114, 103, 0.28);
+  background-color: color-mix(in srgb, var(--ink-muted) 28%, transparent);
+  border-radius: 999px;
   border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(124, 114, 103, 0.48);
+  background-color: color-mix(in srgb, var(--ink-muted) 48%, transparent);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* ============================================================================
@@ -1058,7 +1069,8 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
 }
 
 [data-theme='vision-ceramic'] ::-webkit-scrollbar-thumb {
-  background: rgba(18, 21, 20, 0.2);
+  background-color: rgba(18, 21, 20, 0.18);
+  background-color: color-mix(in srgb, var(--ink-muted) 26%, transparent);
 }
 
 /* ============================================================================
@@ -1331,7 +1343,8 @@ input[type='range'].clay-slider::-webkit-slider-thumb {
 }
 
 [data-theme='liquid-glass'] ::-webkit-scrollbar-thumb {
-  background: rgba(24, 25, 29, 0.22);
+  background-color: rgba(24, 25, 29, 0.18);
+  background-color: color-mix(in srgb, var(--ink-muted) 26%, transparent);
 }
 
 /* Lightweight GPU-Composited Drift for Optional Liquid Glass Dynamic Flow */
@@ -1440,6 +1453,7 @@ body {
     max-height: 100%;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
   }
 
   [data-theme='liquid-glass'] .clay-sidebar {
@@ -2064,6 +2078,76 @@ table {
 
 .sidebar-chat-item.active .sidebar-chat-action-btn:hover {
   background-color: rgba(255, 255, 255, 0.32);
+}
+
+/* Blended, Rounded-Corner-Safe Sidebar Scrollbar (Hidden at Rest, Subtle on Hover) */
+[data-theme] .clay-sidebar::-webkit-scrollbar,
+.clay-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+[data-theme] .clay-sidebar::-webkit-scrollbar-track,
+.clay-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 22px 0;
+}
+
+[data-theme] .clay-sidebar::-webkit-scrollbar-thumb,
+.clay-sidebar::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 999px;
+  border: 1.5px solid transparent;
+  background-clip: content-box;
+}
+
+[data-theme] .clay-sidebar:hover::-webkit-scrollbar-thumb,
+.clay-sidebar:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(24, 25, 29, 0.16);
+  background-color: color-mix(in srgb, var(--ink-muted) 28%, transparent);
+}
+
+[data-theme] .clay-sidebar::-webkit-scrollbar-thumb:hover,
+.clay-sidebar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(24, 25, 29, 0.32);
+  background-color: color-mix(in srgb, var(--ink-muted) 48%, transparent);
+}
+
+[data-theme] .sidebar-chat-history-list::-webkit-scrollbar,
+.sidebar-chat-history-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+[data-theme] .sidebar-chat-history-list::-webkit-scrollbar-track,
+.sidebar-chat-history-list::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 4px 0;
+}
+
+[data-theme] .sidebar-chat-history-list::-webkit-scrollbar-thumb,
+.sidebar-chat-history-list::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+}
+
+[data-theme] .sidebar-chat-history-list:hover::-webkit-scrollbar-thumb,
+.sidebar-chat-history-list:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(24, 25, 29, 0.18);
+  background-color: color-mix(in srgb, var(--ink-muted) 30%, transparent);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .clay-sidebar,
+  .sidebar-chat-history-list {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  .clay-sidebar:hover,
+  .sidebar-chat-history-list:hover {
+    scrollbar-color: color-mix(in srgb, var(--ink-muted) 32%, transparent) transparent;
+  }
 }
 
 
