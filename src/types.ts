@@ -121,7 +121,7 @@ export interface RetrievedChunkResult {
 
 export interface ClaimVerification {
   claim: string;
-  status: 'SUPPORTED' | 'PARTIALLY_SUPPORTED' | 'UNVERIFIED';
+  status: 'SUPPORTED' | 'PARTIALLY_SUPPORTED' | 'CONTRADICTED' | 'UNVERIFIED';
   supportingChunkId?: string;
   supportingDocumentTitle?: string;
   confidence: number;
@@ -240,6 +240,8 @@ export interface RagPipelineConfig {
     anthropic?: string;
     groq?: string;
     openrouter?: string;
+    cohere?: string;
+    jina?: string;
   };
   localEndpoints: {
     ollamaUrl: string;

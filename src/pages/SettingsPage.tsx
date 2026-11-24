@@ -880,10 +880,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <div className="grid-2" style={{ gap: 16, marginBottom: 20 }}>
             {[
               { key: 'openai', label: 'OPENAI API KEY', placeholder: 'sk-proj-...' },
-              { key: 'gemini', label: 'GOOGLE GEMINI API KEY', placeholder: 'AIzaSy...' },
+              { key: 'gemini', label: 'GOOGLE GEMINI API KEY (LLM + NEURAL EMBEDDINGS)', placeholder: 'AIzaSy...' },
               { key: 'anthropic', label: 'ANTHROPIC CLAUDE API KEY', placeholder: 'sk-ant-...' },
               { key: 'groq', label: 'GROQ CLOUD API KEY', placeholder: 'gsk_...' },
               { key: 'openrouter', label: 'OPENROUTER API KEY', placeholder: 'sk-or-v1-...' },
+              { key: 'cohere', label: 'COHERE RERANK v3.5 API KEY (OPTIONAL)', placeholder: 'cohere-...' },
+              { key: 'jina', label: 'JINA RERANKER v2 API KEY (OPTIONAL)', placeholder: 'jina_...' },
             ].map((item) => (
               <div key={item.key}>
                 <label
@@ -901,7 +903,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   type="password"
                   className="clay-input font-mono"
                   placeholder={item.placeholder}
-                  value={(apiKeys as any)[item.key]}
+                  value={(apiKeys as Record<string, string>)[item.key] || ''}
                   onChange={(e) =>
                     setApiKeys({ ...apiKeys, [item.key]: e.target.value })
                   }

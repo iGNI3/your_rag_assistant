@@ -14,6 +14,7 @@ from chunker import (
     extract_top_keywords,
     generate_chunks_by_strategy,
 )
+from reranker import compute_gemini_embeddings_batch, rerank_passages_neural
 from storage_db import PersistentRAGDatabase
 
 VECTOR_DIM = 128
@@ -215,6 +216,7 @@ class HybridVectorDatabase:
         target_chunk_tokens: int = 150,
         chunk_overlap_tokens: int = 30,
         doc_id: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         final_doc_id = doc_id or f"doc_{int(time.time() * 1000)}_{secrets.token_hex(4)}"
 
@@ -229,10 +231,19 @@ class HybridVectorDatabase:
             cleaned_text, title, chosen_strategy, target_chunk_tokens, chunk_overlap_tokens
         )
 
+        # Compute real neural embeddings via gemini-embedding-001 (128-dim Matryoshka) if Gemini key is configured
+        neural_vecs = compute_gemini_embeddings_batch(
+            [rc["content"] for rc in raw_chunks],
+            config=config,
+            output_dim=VECTOR_DIM,
+            task_type="RETRIEVAL_DOCUMENT",
+        )
+        embedding_engine = "gemini-embedding-001" if neural_vecs else "local-semantic-hash"
+
         doc_chunks: List[Dict[str, Any]] = []
         for idx, rc in enumerate(raw_chunks):
             chunk_id = f"{final_doc_id}_ch_{idx + 1}"
-            embedding = compute_semantic_embedding(rc["content"])
+            embedding = neural_vecs[idx] if neural_vecs else compute_semantic_embedding(rc["content"])
             coords_2d = project_vector_to_2d(embedding)
             sparse_terms = tokenize_for_sparse(rc["content"])
             parent_idx = rc.get("parentIndex")
@@ -255,10 +266,14 @@ class HybridVectorDatabase:
                 "informationDensity": rc["informationDensity"],
                 "keywords": rc["keywords"],
                 "embedding": embedding,
+                "embeddingModel": embedding_engine,
                 "coords2D": coords_2d,
                 "sparseTerms": sparse_terms,
             }
             doc_chunks.append(chunk_obj)
+
+        telemetry_enriched = dict(extraction_telemetry or {})
+        telemetry_enriched["embeddingModel"] = embedding_engine
 
         doc_record = {
             "id": final_doc_id,
@@ -271,7 +286,7 @@ class HybridVectorDatabase:
             "cleanedText": cleaned_text,
             "selectedStrategy": chosen_strategy,
             "autoOptimized": auto_optimize,
-            "extractionTelemetry": extraction_telemetry,
+            "extractionTelemetry": telemetry_enriched,
             "strategyBenchmarks": benchmarks,
             "chunkCount": len(raw_chunks),
         }
@@ -302,6 +317,7 @@ class HybridVectorDatabase:
         user_id: str = "usr_demo_admin",
         target_chunk_tokens: int = 150,
         chunk_overlap_tokens: int = 30,
+        config: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         with self._lock:
             existing = self.documents.get(doc_id)
@@ -321,6 +337,7 @@ class HybridVectorDatabase:
             target_chunk_tokens=target_chunk_tokens,
             chunk_overlap_tokens=chunk_overlap_tokens,
             doc_id=existing_copy["id"],
+            config=config,
         )
 
     def delete_document(self, doc_id: str, user_id: str = "usr_demo_admin") -> bool:
@@ -413,14 +430,45 @@ class HybridVectorDatabase:
         idf_cache, avg_chunk_len, _ = self._compute_user_idf_and_hnsw(all_chunks)
         t0 = time.time()
 
-        # Anchor primary vector strongly on the user's original prompt + reshaped query
-        primary_vec = compute_semantic_embedding(f"{original_prompt} {original_prompt} {reshaped_primary_query}")
-        hyde_vec = compute_semantic_embedding(hyde_document or original_prompt)
-        sub_vecs = (
-            [compute_semantic_embedding(sq) for sq in sub_queries]
-            if config.get("enableMultiQuery", True)
-            else []
+        # Identify which docs use real gemini-embedding-001 neural vectors vs legacy local hash vectors
+        neural_doc_ids = {
+            d["id"]
+            for d in self.get_all_documents(user_id)
+            if (d.get("extractionTelemetry") or {}).get("embeddingModel") == "gemini-embedding-001"
+        }
+        has_neural_chunks = any(
+            c.get("embeddingModel") == "gemini-embedding-001" or c["documentId"] in neural_doc_ids
+            for c in all_chunks
         )
+
+        # Anchor primary vector strongly on the user's original prompt + reshaped query
+        primary_text = f"{original_prompt} {original_prompt} {reshaped_primary_query}"
+        hyde_text = hyde_document or original_prompt
+        active_sub_queries = sub_queries if config.get("enableMultiQuery", True) else []
+
+        primary_vec_local = compute_semantic_embedding(primary_text)
+        hyde_vec_local = compute_semantic_embedding(hyde_text)
+        sub_vecs_local = [compute_semantic_embedding(sq) for sq in active_sub_queries]
+
+        primary_vec_neural: Optional[List[float]] = None
+        hyde_vec_neural: Optional[List[float]] = None
+        sub_vecs_neural: List[List[float]] = []
+
+        if has_neural_chunks:
+            batch_texts = [primary_text, hyde_text, *active_sub_queries]
+            neural_q_vecs = compute_gemini_embeddings_batch(
+                batch_texts,
+                config=config,
+                output_dim=VECTOR_DIM,
+                task_type="RETRIEVAL_QUERY",
+            )
+            if neural_q_vecs and len(neural_q_vecs) == len(batch_texts):
+                primary_vec_neural = neural_q_vecs[0]
+                hyde_vec_neural = neural_q_vecs[1]
+                sub_vecs_neural = neural_q_vecs[2:]
+
+        primary_vec = primary_vec_neural or primary_vec_local
+        hyde_vec = hyde_vec_neural or hyde_vec_local
 
         query_coords_2d = project_vector_to_2d(primary_vec)
         hyde_coords_2d = project_vector_to_2d(hyde_vec)
@@ -430,14 +478,22 @@ class HybridVectorDatabase:
         metric = config.get("distanceMetric", "cosine")
         dense_scores: Dict[str, float] = {}
         for chunk in all_chunks:
-            score = compute_vector_similarity(primary_vec, chunk["embedding"], metric)
+            is_neural_chunk = (
+                chunk.get("embeddingModel") == "gemini-embedding-001"
+                or chunk["documentId"] in neural_doc_ids
+            )
+            p_v = primary_vec_neural if (is_neural_chunk and primary_vec_neural) else primary_vec_local
+            h_v = hyde_vec_neural if (is_neural_chunk and hyde_vec_neural) else hyde_vec_local
+            s_vs = sub_vecs_neural if (is_neural_chunk and sub_vecs_neural) else sub_vecs_local
+
+            score = compute_vector_similarity(p_v, chunk["embedding"], metric)
             if config.get("enableHyde", True):
-                hyde_sim = compute_vector_similarity(hyde_vec, chunk["embedding"], metric)
+                hyde_sim = compute_vector_similarity(h_v, chunk["embedding"], metric)
                 score = score * 0.78 + hyde_sim * 0.22
-            if sub_vecs:
+            if s_vs:
                 max_sub = max(
                     compute_vector_similarity(sv, chunk["embedding"], metric)
-                    for sv in sub_vecs
+                    for sv in s_vs
                 )
                 score = score * 0.82 + max_sub * 0.18
             dense_scores[chunk["id"]] = round(score, 4)
@@ -555,6 +611,19 @@ class HybridVectorDatabase:
         all_query_keywords = list(dict.fromkeys(orig_keywords + expanded_keywords))
         crag_threshold = float(config.get("cragThreshold", 0.34))
 
+        # 3-Tier Neural Cross-Encoder Reranker: Cohere v3.5 API -> Jina v2 API -> FlashRank ONNX (~4 MB) -> deterministic fallback
+        neural_rerank_scores: Optional[Dict[str, float]] = None
+        reranker_engine = "Deterministic Feature Reranker"
+        if config.get("enableCrossEncoderRerank", True) and mmr_selected:
+            rerank_query = f"{original_prompt}\n{reshaped_primary_query}".strip()
+            neural_rerank_scores, engine_label = rerank_passages_neural(
+                rerank_query,
+                [item["chunk"] for item in mmr_selected],
+                config=config,
+            )
+            if neural_rerank_scores:
+                reranker_engine = engine_label
+
         # Map (documentId, chunk_index) -> chunk for adjacent context stitching
         chunk_by_doc_idx: Dict[Tuple[str, int], Dict[str, Any]] = {
             (c["documentId"], int(c.get("index", 0))): c for c in all_chunks
@@ -602,29 +671,53 @@ class HybridVectorDatabase:
             if all_query_keywords and total_hits == 0:
                 raw_rerank *= 0.62
 
-            rerank_score = (
-                round(min(0.995, raw_rerank), 4)
-                if config.get("enableCrossEncoderRerank", True)
-                else rrf
-            )
-
-            if (rerank_score >= max(0.46, crag_threshold + 0.10) and total_hits >= 1) or coverage_ratio >= 0.38:
-                crag_grade = "HIGHLY_RELEVANT"
-                crag_reason = (
-                    f"High semantic alignment ({rerank_score * 100:.1f}%) matching {orig_hits} direct + "
-                    f"{exp_hits} inferred domain entities."
-                )
-            elif total_hits >= 1 or rerank_score >= crag_threshold * 0.85:
-                crag_grade = "PARTIAL_SUPPORT"
-                crag_reason = (
-                    f"Contextual support ({rerank_score * 100:.1f}%) matching {total_hits} domain term(s) in [{ch['sectionPath']}]."
-                )
+            neural_sc = neural_rerank_scores.get(cid) if neural_rerank_scores else None
+            if config.get("enableCrossEncoderRerank", True):
+                if neural_sc is not None:
+                    # Calibrated neural Cross-Encoder leads ranking & CRAG grading
+                    rerank_score = round(min(0.995, neural_sc * 0.72 + raw_rerank * 0.28), 4)
+                else:
+                    rerank_score = round(min(0.995, raw_rerank), 4)
             else:
-                crag_grade = "IRRELEVANT_NOISE"
-                crag_reason = (
-                    f"Below CRAG confidence gate ({rerank_score * 100:.1f}%, 0 domain hits); "
-                    f"pruned to prevent context dilution."
-                )
+                rerank_score = rrf
+
+            if neural_sc is not None:
+                if rerank_score >= max(0.50, crag_threshold + 0.14) or neural_sc >= 0.62:
+                    crag_grade = "HIGHLY_RELEVANT"
+                    crag_reason = (
+                        f"[{reranker_engine}] High neural cross-attention ({neural_sc * 100:.1f}%, blended {rerank_score * 100:.1f}%) "
+                        f"with {orig_hits} direct + {exp_hits} domain hits."
+                    )
+                elif rerank_score >= crag_threshold * 0.80 or total_hits >= 1:
+                    crag_grade = "PARTIAL_SUPPORT"
+                    crag_reason = (
+                        f"[{reranker_engine}] Supporting context ({neural_sc * 100:.1f}%, blended {rerank_score * 100:.1f}%) "
+                        f"in [{ch['sectionPath']}]."
+                    )
+                else:
+                    crag_grade = "IRRELEVANT_NOISE"
+                    crag_reason = (
+                        f"[{reranker_engine}] Below calibrated CRAG gate ({neural_sc * 100:.1f}%); "
+                        f"pruned to prevent context dilution."
+                    )
+            else:
+                if (rerank_score >= max(0.46, crag_threshold + 0.10) and total_hits >= 1) or coverage_ratio >= 0.38:
+                    crag_grade = "HIGHLY_RELEVANT"
+                    crag_reason = (
+                        f"[{reranker_engine}] High semantic alignment ({rerank_score * 100:.1f}%) matching {orig_hits} direct + "
+                        f"{exp_hits} inferred domain entities."
+                    )
+                elif total_hits >= 1 or rerank_score >= crag_threshold * 0.85:
+                    crag_grade = "PARTIAL_SUPPORT"
+                    crag_reason = (
+                        f"[{reranker_engine}] Contextual support ({rerank_score * 100:.1f}%) matching {total_hits} domain term(s) in [{ch['sectionPath']}]."
+                    )
+                else:
+                    crag_grade = "IRRELEVANT_NOISE"
+                    crag_reason = (
+                        f"[{reranker_engine}] Below CRAG confidence gate ({rerank_score * 100:.1f}%, 0 domain hits); "
+                        f"pruned to prevent context dilution."
+                    )
 
             # Stitch adjacent neighbor context (next chunk in same doc) into parentContext if none exists
             parent_ctx = ch.get("parentContext")

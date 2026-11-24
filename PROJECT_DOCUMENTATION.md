@@ -21,16 +21,16 @@ flowchart TD
     FE -->|"Bearer Token + REST API"| API["Python Flask + Gunicorn Backend (Render)"]
 
     subgraph Ingestion["1. Document Ingestion & Indexing Pipeline"]
-        API --> EXT["extractor.py (PDF / OCR / DOCX / XLSX / CSV / HTML)"]
+        API --> EXT["extractor.py (pdfplumber / OCR / DOCX / XLSX / CSV / HTML)"]
         EXT --> CHK["chunker.py (5 Adaptive Strategies + Auto-Benchmark)"]
-        CHK --> VDB["vectordb.py (3-Layer HNSW Graph + BM25+ Sparse Index)"]
+        CHK --> VDB["vectordb.py + reranker.py (gemini-embedding-001 128d + HNSW + BM25+)"]
     end
 
     subgraph Retrieval["2. Agentic RAG Query & Synthesis Pipeline"]
         API --> RSH["llm_engine.py: Small LLM Prompt Reshaper + HyDE + Domain Expansion"]
-        RSH --> HYB["Hybrid Search: HNSW Dense + BM25+ Sparse -> RRF + MMR"]
-        HYB --> CRG["Cross-Encoder Reranker + CRAG Noise Gate + Neighbor Stitching"]
-        CRG --> SYN["Grounded LLM Synthesizer (Gemini / OpenAI / Groq / Ollama / Local)"]
+        RSH --> HYB["Hybrid Search: Space-Matched HNSW Dense + BM25+ Sparse -> RRF + MMR"]
+        HYB --> CRG["reranker.py: 3-Tier Neural Cross-Encoder (Cohere/Jina/FlashRank ONNX) + Calibrated CRAG"]
+        CRG --> SYN["Grounded SSE Streaming LLM Synthesizer + Post-Stream Batched Self-RAG Judge"]
     end
 
     subgraph Storage["3. Dual-Engine Multi-User ACID Vault"]
@@ -49,19 +49,21 @@ flowchart TD
 3. **5-Strategy Adaptive Chunking (`backend/chunker.py`)**:
    - Benchmarks all 5 strategies (**Semantic Inflection**, **Hierarchical Parent-Child**, **Atomic Fact Propositions**, **Structural AST & Table**, and **Sliding Window**) on coherence, boundary sharpness, density, and uniformity, automatically selecting the winning strategy (or letting the user override it).
    - Preserves original document line breaks (`\n`) inside parent and child chunks.
-4. **Hybrid Indexing (`backend/vectordb.py`)**:
+4. **Hybrid Neural + Sparse Indexing (`backend/vectordb.py` + `backend/reranker.py`)**:
+   - Computes real **128-dim Matryoshka neural embeddings** via Google's `gemini-embedding-001` REST `batchEmbedContents` API (`outputDimensionality: 128`, unit-normalized, reusing the user's configured Gemini key), with automatic graceful fallback to deterministic semantic hash embeddings when offline or unconfigured. Each chunk tags its `embeddingModel` so neural and legacy hash vector spaces never collide.
    - Indexes every chunk into a **3-Layer HNSW dense vector graph** (supporting Cosine, Dot Product, Euclidean, and Manhattan distance metrics) alongside a **BM25+ sparse lexical index** (`k1 = 1.5, b = 0.75`) and computes 2D manifold coordinates for visual inspection.
 5. **Agentic Prompt Reshaping & Domain Expansion (`backend/llm_engine.py`)**:
    - Detects conversational greetings naturally (e.g., `"Hi"` responds cleanly without dumping raw document chunks).
    - Expands everyday questions into formal document/policy terminology (e.g., mapping `"LASIK surgery next month"` to `"refractive error"`, `"cosmetic or plastic surgery"`, `"Code Excl08"`, `"waiting period"`, `"day care"`).
    - Generates a **Step-Back Query**, **3 Multi-Query Sub-Queries**, and a **HyDE (Hypothetical Document Embedding)** passage, using up to 3 previous turns from the *same* `chatId` for conversational memory.
-6. **Hybrid RRF Retrieval, Cross-Encoder Reranking & CRAG Gating**:
-   - Combines HNSW dense ranks and BM25+ sparse ranks using **Reciprocal Rank Fusion (RRF)** and **Maximal Marginal Relevance (MMR)** diversity filtering.
+6. **Space-Matched Hybrid RRF Retrieval, 3-Tier Neural Cross-Encoder Reranking & Calibrated CRAG Gating (`backend/vectordb.py` + `backend/reranker.py`)**:
+   - Runs **space-matched** HNSW dense search (comparing `gemini-embedding-001` chunks against neural query/HyDE vectors and legacy chunks against local hash vectors) alongside BM25+ sparse search, fusing ranks via **Reciprocal Rank Fusion (RRF)** and diversifying with **Maximal Marginal Relevance (MMR)**.
    - Prioritizes user-uploaded documents over starter demo whitepapers so custom documents always surface first.
-   - Reranks top candidates via Cross-Encoder scoring, filters irrelevant noise through the **Corrective RAG (CRAG) Noise Gate**, and stitches adjacent neighbor chunks so multi-paragraph clauses are never cut off mid-sentence.
-7. **Grounded Synthesis, SSE Live Token Streaming & Verification**:
+   - Reranks top candidates through a **3-tier neural Cross-Encoder cascade** (`Cohere Rerank v3.5` API -> `Jina Reranker v2` API -> local **`FlashRank` ONNX** `ms-marco-TinyBERT-L-2-v2`, ~4 MB, lazy-loaded, Render 512 MB safe -> deterministic lexical fallback), blending calibrated neural relevance scores (`0.72 * neural + 0.28 * lexical_signal`) to drive ranking and **calibrated Corrective RAG (CRAG) gating** (`HIGHLY_RELEVANT` / `PARTIAL_SUPPORT` / `IRRELEVANT_NOISE`), then stitches adjacent neighbor chunks so multi-paragraph clauses are never cut off mid-sentence.
+7. **Grounded Synthesis, SSE Live Token Streaming & Batched Post-Stream LLM Self-RAG Verification (`backend/llm_engine.py`)**:
    - Routes generation to the user's configured provider (**Gemini**, **OpenAI**, **Groq**, **OpenRouter**, **Anthropic**, **Ollama**, **LM Studio**, or built-in offline extractive synthesis) with automatic model-slug normalization and fallback retries.
-   - Streams real-time stage events (`stage`, `retrieval`), live token deltas (`token`), and finalized telemetry (`done`) over **Server-Sent Events (`POST /api/query/stream`)** so Markdown tables, headings, and inline `[Source X]` citations type out live in the UI, followed by Self-RAG claim verification and evaluation metrics (`NDCG@K`, `MRR`, `Groundedness`, `Optimization Index`).
+   - Streams real-time stage events (`stage`, `retrieval`), live token deltas (`token`), and finalized telemetry (`done`) over **Server-Sent Events (`POST /api/query/stream`)** so Markdown tables, headings, and inline `[Source X]` citations type out live in the UI.
+   - Immediately after streaming completes (**0 ms impact on Time-To-First-Token**), runs **1 single batched LLM Self-RAG entailment judge call** via the fast Reshaper model (`_verify_claims_via_llm_judge()`) to classify every claim as `SUPPORTED`, `PARTIALLY_SUPPORTED`, `CONTRADICTED`, or `UNVERIFIED` against the cited evidence (automatically falling back to zero-token lexical grounding when offline or rate-limited), followed by evaluation metrics (`NDCG@K`, `MRR`, `Groundedness`, `Optimization Index`).
 
 ---
 
@@ -80,7 +82,7 @@ A deliberate engineering decision was made to build `RAG_BUDDY`'s core pipeline 
 
 ### Where Specialized Libraries *Do* Help
 - **PDF Table Extraction**: LangChain itself uses `pypdf` under the hood (`PyPDFLoader`), so LangChain would not have solved complex PDF table grids on its own. Instead, we plugged **`pdfplumber`** directly into `backend/extractor.py` for lightweight (~40 MB RAM), native X/Y coordinate Markdown table extraction that still fits Render's 512 MB free tier (whereas `Docling` requires 1.5–3 GB RAM + PyTorch).
-- **Neural Embeddings & Managed Vector Search**: Plugging Gemini/OpenAI embeddings + `pgvector` directly into Neon PostgreSQL can be added in ~30 lines of Python without adopting a heavy orchestration framework.
+- **Neural Cross-Encoder Reranking & Real Embeddings Without PyTorch Bloat**: Rather than pulling `sentence-transformers` + PyTorch (which exceed Render's 512 MB RAM ceiling), `backend/reranker.py` implements a lightweight 3-tier neural Cross-Encoder cascade (**Cohere Rerank v3.5** REST -> **Jina Reranker v2** REST -> local **`FlashRank` ONNX** `ms-marco-TinyBERT-L-2-v2`, ~4 MB, lazy-loaded) plus real 128-dim Matryoshka neural embeddings via Google's **`gemini-embedding-001`** `batchEmbedContents` REST endpoint—keeping total runtime memory comfortably under 512 MB.
 - **When LangChain / LangGraph Makes Sense**: When an app needs 30+ pre-built SaaS connectors (Confluence, SharePoint, Notion, Jira, Slack) or complex branching multi-agent state machines (`LangGraph`).
 
 ---
@@ -127,14 +129,16 @@ A deliberate engineering decision was made to build `RAG_BUDDY`'s core pipeline 
 
 | Path | Role |
 | :--- | :--- |
-| `backend/main.py` | Flask REST API server, auth middleware, RAG pipeline orchestrator, and `/api/chats` endpoints |
+| `backend/main.py` | Flask REST API server, auth middleware, RAG pipeline orchestrator, SSE streaming (`/api/query/stream`), and `/api/chats` endpoints |
 | `backend/storage_db.py` | Dual-engine ACID database layer (Neon PostgreSQL + SQLite3 WAL) for all 8 tables (`users`, `sessions`, `documents`, `vector_chunks`, `chat_sessions`, `query_runs`, `saved_findings`, `pipeline_config`) |
-| `backend/extractor.py` | Multi-format document & OCR extractor (PDF, DOCX, XLSX, CSV, HTML, Images, Markdown) |
+| `backend/extractor.py` | Multi-format document & OCR extractor (`pdfplumber` X/Y PDF tables + `pypdf` fallback, DOCX, XLSX, CSV, HTML, Images, Markdown) |
 | `backend/chunker.py` | 5-strategy adaptive chunking engine and automated strategy benchmarker |
-| `backend/vectordb.py` | 3-layer HNSW vector graph + BM25+ sparse index + RRF/MMR hybrid retrieval + Cross-Encoder reranking |
-| `backend/llm_engine.py` | Prompt reshaper, domain concept expansion, HyDE synthesis, multi-provider LLM router, and claim verification |
-| `src/App.tsx` | Main React shell, authentication gate, 9-page router, theme engine, and sidebar Chat History UI |
-| `src/pages/ChatHomePage.tsx` | Conversational chat thread, live 4-stage answering animation, and Floating Full Document Reader with PDF table parser |
+| `backend/reranker.py` | 3-tier neural Cross-Encoder reranker (`Cohere Rerank v3.5` -> `Jina Reranker v2` -> local `FlashRank` ONNX ~4 MB) + `gemini-embedding-001` 128-dim Matryoshka batch neural embeddings |
+| `backend/vectordb.py` | 3-layer HNSW vector graph + BM25+ sparse index + space-matched RRF/MMR hybrid retrieval + calibrated neural Cross-Encoder CRAG gating |
+| `backend/llm_engine.py` | Prompt reshaper, domain concept expansion, HyDE synthesis, multi-provider streaming LLM router, and batched post-stream LLM Self-RAG entailment verifier |
+| `src/App.tsx` | Main React shell, authentication gate, 10-page router, theme engine, and sidebar Chat History UI |
+| `src/pages/ChatHomePage.tsx` | Conversational chat thread, live 4-stage answering animation, SSE streaming consumer, and Floating Full Document Reader with PDF table parser |
+| `src/pages/SettingsPage.tsx` | Provider selection, encrypted/masked API keys (including optional Cohere Rerank v3.5 & Jina Reranker v2 keys), RAG hyperparameters, and profile/password management |
 | `src/components/RichMarkdownRenderer.tsx` | Markdown renderer with clickable `[SOURCE X]` citation tooltips, code copy blocks, and HTML table rendering |
 | `src/styles/clay.css` | Complete design system for all 3 material themes, responsive layouts, animations, and document reader tables |
 | `src/themePalettes.ts` | Definitions for the 9 curated color palettes across all 3 material modes |
@@ -170,21 +174,30 @@ Breaks cleaned documents into high-coherence retrieval chunks while preserving l
 | `generate_chunks_by_strategy()` | Dispatcher that executes whichever of the 5 strategies is selected. |
 | `benchmark_all_chunk_strategies()` | Runs all 5 strategies on an ingested document, scores each via `compute_chunk_metrics()`, `estimate_tokens()`, and `extract_top_keywords()`, and recommends the highest composite-scoring strategy. |
 
-### 6.3 `backend/vectordb.py` — Hybrid HNSW + BM25+ Vector Database & Reranking Engine
+### 6.3 `backend/reranker.py` — Neural Cross-Encoder Reranker & Matryoshka Neural Embeddings
+Provides lightweight, Render-512-MB-safe neural embeddings and 3-tier Cross-Encoder reranking with automatic graceful fallbacks.
+
+| Function | Responsibility in the RAG Pipeline |
+| :--- | :--- |
+| `_get_flashrank_ranker()` | Thread-safe lazy singleton loader for the local **`FlashRank` ONNX Cross-Encoder** (`ms-marco-TinyBERT-L-2-v2`, ~4 MB, CPU-only, zero PyTorch footprint). Gracefully returns `None` if `flashrank` is unavailable on the host runtime. |
+| `rerank_passages_neural()` | 3-tier neural Cross-Encoder reranking cascade: **(1) Cohere Rerank v3.5** (`https://api.cohere.com/v2/rerank`) -> **(2) Jina Reranker v2** (`https://api.jina.ai/v1/rerank`) -> **(3) Local FlashRank ONNX** (`ms-marco-TinyBERT-L-2-v2`) -> **(4) Deterministic Lexical Fallback** `(None, "deterministic_lexical")`. Returns normalized `[0, 1]` relevance scores and the active engine label. |
+| `compute_gemini_embeddings_batch()` | Calls Google's **`gemini-embedding-001`** REST `batchEmbedContents` endpoint with Matryoshka `outputDimensionality: 128` and `taskType` (`RETRIEVAL_DOCUMENT` / `RETRIEVAL_QUERY`), L2-normalizing returned vectors in batches of 50 with automatic `None` fallback when offline or unconfigured. |
+
+### 6.4 `backend/vectordb.py` — Hybrid HNSW + BM25+ Vector Database & Calibrated CRAG Engine
 Stores embeddings and sparse lexical indexes per user and runs the multi-stage retrieval pipeline.
 
 | Function / Class | Responsibility in the RAG Pipeline |
 | :--- | :--- |
-| `compute_semantic_embedding()` | Generates unit-normalized semantic dense vectors for document chunks, queries, and HyDE passages. |
+| `compute_semantic_embedding()` | Generates deterministic unit-normalized 128-dim semantic dense vectors as an instant offline fallback when neural embeddings are not configured. |
 | `tokenize_for_sparse()` & `stem_word()` | Tokenizes and stems text into term-frequency maps for BM25+ lexical search. |
 | `project_vector_to_2d()` | Projects high-dimensional chunk/query/HyDE vectors into 2D coordinates (`coords2D`) for the interactive 2D Vector Manifold visualization. |
 | `compute_vector_similarity()` | Evaluates vector similarity across 4 configurable distance metrics: `cosine`, `dot`, `euclidean`, and `manhattan`. |
 | `HybridVectorDatabase._compute_user_idf_and_hnsw()` | Builds each user's **3-layer HNSW proximity graph** and corpus-wide BM25+ IDF weights. |
-| `HybridVectorDatabase.ingest_document()` & `rechunk_document()` | Runs chunking, computes embeddings + sparse terms + 2D coordinates, updates the in-memory HNSW graph, and persists everything via `storage_db.py`. |
-| `HybridVectorDatabase.hybrid_retrieve_and_rerank()` | Core retrieval engine: executes dense HNSW search + sparse BM25+ search across primary, step-back, multi-query, and HyDE vectors; fuses ranks with **Reciprocal Rank Fusion (RRF)**; diversifies with **MMR**; prioritizes user-uploaded documents over starter demo docs (`_is_starter_seed_chunk()`); applies **Cross-Encoder reranking**; gates noise via **CRAG** (`HIGHLY_RELEVANT` / `PARTIAL_SUPPORT` / `IRRELEVANT_NOISE`); and performs **neighbor chunk stitching** so multi-paragraph clauses stay complete. |
+| `HybridVectorDatabase.ingest_document()` & `rechunk_document()` | Runs chunking, computes batch **128-dim `gemini-embedding-001` neural embeddings** (falling back to `compute_semantic_embedding()` and tagging each chunk's `embeddingModel`) + sparse terms + 2D coordinates, updates the in-memory HNSW graph, and persists everything via `storage_db.py`. |
+| `HybridVectorDatabase.hybrid_retrieve_and_rerank()` | Core retrieval engine: executes **space-matched** dense HNSW search (neural query/HyDE vectors against `gemini-embedding-001` chunks; local hash vectors against legacy chunks) + sparse BM25+ search across primary, step-back, multi-query, and HyDE queries; fuses ranks with **Reciprocal Rank Fusion (RRF)**; diversifies with **MMR**; prioritizes user-uploaded documents over starter demo docs (`_is_starter_seed_chunk()`); reranks via `rerank_passages_neural()` (`0.72 * neural + 0.28 * lexical_signal`); applies **calibrated CRAG gating** (`HIGHLY_RELEVANT` / `PARTIAL_SUPPORT` / `IRRELEVANT_NOISE`); and performs **neighbor chunk stitching** so multi-paragraph clauses stay complete. |
 
-### 6.4 `backend/llm_engine.py` — Prompt Reshaper, Domain Expansion, LLM Router & Synthesis
-Handles query intelligence, external/local LLM routing, answer synthesis, and Self-RAG verification.
+### 6.5 `backend/llm_engine.py` — Prompt Reshaper, Domain Expansion, LLM Router & Self-RAG Judge
+Handles query intelligence, external/local LLM routing, live streaming synthesis, and batched Self-RAG entailment verification.
 
 | Function | Responsibility in the RAG Pipeline |
 | :--- | :--- |
@@ -193,10 +206,11 @@ Handles query intelligence, external/local LLM routing, answer synthesis, and Se
 | `reshape_user_prompt()` | Small LLM Prompt Reshaper: classifies query intent and complexity, strips conversational noise, incorporates 3-turn chat history, and generates the reshaped primary query, step-back query, 3 sub-queries, and HyDE document. |
 | `_resolve_effective_provider_and_model()` & `_normalize_gemini_model_candidates()` | Automatically routes API keys across providers and normalizes human-readable model labels (e.g., `"Gemini 2.5 Flash Lite"` -> `"gemini-2.5-flash-lite"`) with automatic fallback slugs. |
 | `call_external_llm_if_available()` & `stream_external_llm_if_available()` | Zero-SDK HTTP clients (atomic JSON + live SSE/NDJSON streaming) calling **Gemini**, **OpenAI**, **Groq**, **OpenRouter**, **Anthropic**, **Ollama**, and **LM Studio**. |
-| `synthesize_answer_and_verify()` & `stream_synthesize_answer_and_verify()` | Sends the retrieved context (wrapped in `<retrieved_sources>` prompt-injection delimiters), chat history, and 4-part analyst prompt (including Markdown Summary Table instructions and `[Source X]` citation rules) to the active LLM—streaming live token deltas in SSE mode; falls back to `_build_extractive_direct_answer()` if offline; then computes **Self-RAG claim verifications** and RAG metrics (`NDCG@K`, `MRR`, `Groundedness`, `Optimization Index`). |
+| `_verify_claims_via_llm_judge()` | Runs **1 single batched post-stream LLM Self-RAG entailment call** via the fast Reshaper model (`temperature: 0.0`) after answer streaming completes (0 ms TTFT impact), checking up to 6 extracted claims against `<evidence_sources>` to detect `SUPPORTED`, `PARTIALLY_SUPPORTED`, `CONTRADICTED`, or `UNVERIFIED` (including numeric/negation contradictions), with automatic fallback to zero-token lexical grounding if offline or rate-limited. |
+| `synthesize_answer_and_verify()`, `stream_synthesize_answer_and_verify()` & `_finalize_synthesis_and_verify()` | Sends retrieved context (wrapped in `<retrieved_sources>` prompt-injection delimiters), chat history, and 4-part analyst prompt (including Markdown Summary Table instructions and `[Source X]` citation rules) to the active LLM—streaming live token deltas in SSE mode; falls back to `_build_extractive_direct_answer()` if offline; then executes batched **LLM Self-RAG claim verification** (`_verify_claims_via_llm_judge()`) and computes RAG metrics (`NDCG@K`, `MRR`, `Groundedness`, `Optimization Index`). |
 | `scan_local_model_path()` & `inspect_model_file()` | Scans local directories for offline `.gguf` / `.safetensors` models for the Settings & Offline Model Portal. |
 
-### 6.5 `backend/storage_db.py` — Dual-Engine PostgreSQL & SQLite3 Persistence Vault
+### 6.6 `backend/storage_db.py` — Dual-Engine PostgreSQL & SQLite3 Persistence Vault
 Manages all 8 database tables, encryption, authentication, and multi-user chat history.
 
 | Function / Class | Responsibility in the RAG Pipeline |
@@ -204,31 +218,32 @@ Manages all 8 database tables, encryption, authentication, and multi-user chat h
 | `_DualConnection` & `_DualCursor` | Transparent database adapter that translates `?` placeholders to `%s` for **Neon PostgreSQL** while running natively on **SQLite3 WAL** locally. |
 | `PersistentRAGDatabase._init_schema()` | Creates and safely migrates all 8 tables (`users`, `sessions`, `documents`, `vector_chunks`, `chat_sessions`, `query_runs`, `saved_findings`, `pipeline_config`). |
 | `create_user()`, `authenticate_user()`, `create_session()`, `get_user_by_token()` | Multi-user account registration, PBKDF2-SHA256 password hashing (200k rounds), and bearer-token session authentication. |
-| `_encrypt_secret()` & `_decrypt_secret()` | Encrypts stored provider API keys at rest inside `pipeline_config`. |
+| `_encrypt_secret()` & `_decrypt_secret()` | Encrypts stored provider API keys (LLM + Cohere/Jina reranker keys) at rest inside `pipeline_config`. |
 | `upsert_document_and_chunks()`, `load_all_documents_and_chunks()`, `delete_document()` | Persists and reloads user-scoped documents, raw/cleaned text, and vector chunks across server restarts. |
 | `create_chat_session()`, `list_chat_sessions()`, `rename_chat_session()`, `delete_chat_session()` | Full CRUD for per-user multi-conversation chat history, including auto-titling (`_make_auto_chat_title()`) and legacy history migration (`_ensure_legacy_runs_have_chat_session()`). |
 | `record_query_run()` & `load_query_history()` | Stores every RAG turn with full retrieval telemetry under its `chat_id` and loads scoped conversation memory. |
 | `save_finding()`, `list_saved_findings()`, `delete_finding()` | Saves pinned RAG answers into the database and exports them as `.md` research notes. |
 
-### 6.6 `backend/main.py` — Flask REST API & Pipeline Orchestrator
+### 6.7 `backend/main.py` — Flask REST API & Pipeline Orchestrator
 Exposes all HTTP endpoints, enforces per-user authentication, and wires the full RAG pipeline together.
 
 | Function / Route | Responsibility in the RAG Pipeline |
 | :--- | :--- |
-| `require_auth()` | Decorator that validates `Authorization: Bearer <token>` on every workspace request and attaches `g.current_user`. |
+| `require_auth()` | Decorator that validates `Authorization: Bearer <token>` (or `HttpOnly` session cookie) on every workspace request and attaches `g.current_user`. |
 | `execute_rag_pipeline()` | Master RAG orchestrator: loads 3-turn memory for the active `chat_id`, calls `reshape_user_prompt()` -> `hybrid_retrieve_and_rerank()` -> `synthesize_answer_and_verify()`, and persists the turn via `record_query_run()`. |
-| `ingest_upload()` (`POST /api/ingest/upload`) & `ingest_text()` (`POST /api/ingest/text`) | Accepts file uploads or raw text, runs `extractor.py`, indexes into `vectordb.py`, and returns updated workspace telemetry. |
-| `rechunk_doc()` (`POST /api/documents/<id>/rechunk`) & `delete_doc()` (`DELETE /api/documents/<id>`) | Re-chunks any document live with a new strategy or deletes it from both HNSW and the SQL vault. |
-| `query_rag()` (`POST /api/query`) & `query_rag_stream()` (`POST /api/query/stream`) | Runs the full RAG pipeline for the user's prompt and active `chatId`. `/api/query/stream` emits live Server-Sent Events (`stage`, `retrieval`, `token`, `done`) with `X-Accel-Buffering: no` for instant token-by-token typing; `/api/query` returns the atomic JSON payload. |
+| `ingest_upload()` (`POST /api/ingest/upload`) & `ingest_text()` (`POST /api/ingest/text`) | Accepts file uploads or raw text, runs `extractor.py`, passes active user `config` into `vectordb.py` for neural `gemini-embedding-001` batch indexing, and returns updated workspace telemetry. |
+| `rechunk_doc()` (`POST /api/documents/<id>/rechunk`) & `delete_doc()` (`DELETE /api/documents/<id>`) | Re-chunks and re-embeds any document live with a new strategy or deletes it from both HNSW and the SQL vault. |
+| `query_rag()` (`POST /api/query`) & `query_rag_stream()` (`POST /api/query/stream`) | Runs the full RAG pipeline (supporting LLM + `cohere`/`jina` reranker keys) for the user's prompt and active `chatId`. `/api/query/stream` emits live Server-Sent Events (`stage`, `retrieval`, `token`, `done`) with `X-Accel-Buffering: no` for instant token-by-token typing; `/api/query` returns the atomic JSON payload. |
 | `get_chats()`, `create_chat()`, `rename_chat()`, `remove_chat()` (`/api/chats`) | REST endpoints powering the sidebar Chat History list, `+ NEW CHAT`, inline rename, and delete. |
 | `get_state()` (`GET /api/state`) & `get_user_analytics_route()` (`GET /api/analytics`) | Hydrates the frontend with the signed-in user's documents, chunks, HNSW stats, config, chat sessions, query history, saved findings, and per-user token/chunk/technique analytics (`get_user_analytics()`). |
 
-### 6.7 Key Frontend Modules & Functions (`src/`)
+### 6.8 Key Frontend Modules & Functions (`src/`)
 | Script | Key Functions / Components | Responsibility |
 | :--- | :--- | :--- |
 | `src/App.tsx` | `fetchFullState()`, `fetchAnalytics()`, `handleExecuteQuery()`, `handleCreateChat()`, `handleSelectChat()`, `handleRenameChat()`, `handleDeleteChat()`, `handleUploadFiles()` | Manages auth state, 10-page studio navigation, theme/palette switching, and the sidebar **Chat History** panel. |
 | `src/pages/AnalyticsDashboardPage.tsx` | `AnalyticsDashboardPage`, `InteractiveDonutChart` | Renders the per-user **Usage & Token Dashboard**: real provider/estimated token KPIs, interactive SVG Pie/Donut charts (chunking techniques & token stages/providers), token usage trend area/line graph, chunks/tokens-per-file bar chart, format/OCR mix bar, and searchable/sortable per-document technique audit table. |
-| `src/pages/ChatHomePage.tsx` | `openSourcePreviewModal()`, `restoreDocumentStructure()`, `parseStructuredTableRow()`, `parsePageIntoBlocks()`, `findPassageCharRange()` | Renders the conversational chat thread, 4-stage live answering animation, and the **Floating Full Document Reader** with multi-line PDF table unwrapping, structured HTML table rendering, and exact offset-based inline/row highlighting. |
+| `src/pages/ChatHomePage.tsx` | `openSourcePreviewModal()`, `restoreDocumentStructure()`, `parseStructuredTableRow()`, `parsePageIntoBlocks()`, `findPassageCharRange()` | Renders the conversational chat thread, 4-stage live answering animation, SSE token streaming, and the **Floating Full Document Reader** with multi-line PDF table unwrapping, structured HTML table rendering, and exact offset-based inline/row highlighting. |
+| `src/pages/SettingsPage.tsx` | `SettingsPage` | Configures LLM provider/model, encrypted/masked LLM API keys, optional **Cohere Rerank v3.5** & **Jina Reranker v2** API keys, RAG hyperparameters, and account settings. |
 | `src/components/RichMarkdownRenderer.tsx` | `renderInlineTokens()`, `normalizeContentForTables()`, `isPipeTableRow()`, `parseChatStructuredRow()` | Renders chat answers with clickable `[SOURCE X]` citation hover-tooltip pills, copyable code blocks, Markdown pipe tables, and structured policy tables. |
 
 ---
@@ -262,7 +277,7 @@ A full-stack security audit identified **20 findings** across secret management,
 | 11 | **Medium** | Direct Prompt Injection | User queries were interpolated without delimiters or system-prompt protection; reshaper JSON used greedy regex with unvalidated fields. | Wrapped queries in `<user_question>` delimiters, added strict instruction-hierarchy rules to both reshaper and generator system prompts, and replaced greedy regex with `JSONDecoder.raw_decode` + strict type/length validation (`subQueries`, `hydeDocument`, `reshapedPrimaryQuery`, `stepBackQuery`, `reasoningTrace`). |
 | 12 | **Medium** | Multi-Turn History Poisoning | Prior turns were flattened as plain text (`User: ...\nAssistant: ...`) inside a single `user_prompt`. | Refactored `call_external_llm_if_available()` to accept structured `history_messages` (`user`/`assistant` role turns, or `user`/`model` for Gemini) across Ollama, LM Studio, OpenAI, Groq, OpenRouter, Gemini, and Anthropic. |
 | 13 | **Medium** | Prompt Flooding & Schema Bounds | `/api/query` had no prompt length cap. | Enforced `MAX_PROMPT_CHARS = 4000` (returning HTTP `400`) on `/api/query` and bounded chunk/token parameter ranges. |
-| 14 | **Medium** | Non-Verifying Claim Check | `claim_verifications` copied the first sentence of top chunks and always marked them `SUPPORTED`, even if the LLM answer was hallucinated or injected. | Rewrote claim verification in `synthesize_answer_and_verify()` to extract substantive declarative sentences from the actual generated `answer`, measure grounding overlap against cited/retrieved chunks, assign `SUPPORTED` / `PARTIALLY_SUPPORTED` / `UNVERIFIED`, and compute `groundednessFaithfulness` directly from verified claim scores. |
+| 14 | **Medium** | Non-Verifying Claim Check | `claim_verifications` copied the first sentence of top chunks and always marked them `SUPPORTED`, even if the LLM answer was hallucinated or injected. | Rewrote claim verification in `_finalize_synthesis_and_verify()` + `_verify_claims_via_llm_judge()` to extract substantive declarative sentences from the actual generated `answer`, run **1 batched post-stream LLM Self-RAG entailment call** via the fast Reshaper model (0 ms TTFT impact) to classify claims as `SUPPORTED` / `PARTIALLY_SUPPORTED` / `CONTRADICTED` / `UNVERIFIED` (with automatic zero-token lexical overlap fallback when offline or rate-limited), and compute `groundednessFaithfulness` directly from verified claim scores. |
 | 15 | **Medium** | Username/Email Validation | Usernames allowed spaces and `@` (risking email/username collisions on login); weak email checks. | Enforced `USERNAME_RE` (`^[a-z0-9][a-z0-9_.-]{2,31}$`), `EMAIL_RE`, and 8-character minimum passwords on signup and username/password changes (while preserving backward-compatible login and display-name edits for pre-existing legacy usernames); aligned `minLength={8}` and username pattern in `AuthPage.tsx` and `SettingsPage.tsx`. |
 | 16 | **Medium** | Session Token Storage & TTL | 30-day session tokens were stored only in `localStorage`. | Reduced default session TTL to `7` days (`SESSION_TTL_DAYS`), added `HttpOnly; SameSite` (and `Secure` over HTTPS) `clayrag_session` cookies on login/register (cleared on logout/delete), updated `_extract_bearer_token()` to accept cookies or Bearer headers, and updated `src/api.ts` + `src/App.tsx` to use cookie-only auth without `localStorage` on same-origin or `VITE_USE_COOKIE_AUTH=true` deployments. |
 | 17 | **Medium** | Session Revocation & Deletion Cleanup | Password changes left other sessions active; account deletion orphaned `chat_sessions` rows and disk folders. | Updated `change_user_password()` to revoke all other `sessions` for the user (keeping `keep_token`), and updated `delete_user_account()` to delete `chat_sessions` rows and safely purge `uploads/<user_id>/` and `exports/<user_id>/`. |

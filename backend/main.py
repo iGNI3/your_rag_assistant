@@ -620,6 +620,7 @@ def ingest_upload():
             preferred_strategy=preferred_strategy,
             target_chunk_tokens=target_tokens,
             chunk_overlap_tokens=overlap_tokens,
+            config=cfg,
         )
         doc["storedFilePath"] = stored_path
         doc_chunks = [c for c in vector_db.get_all_chunks(user_id) if c["documentId"] == doc["id"]]
@@ -672,6 +673,7 @@ def ingest_text():
         preferred_strategy=strategy,
         target_chunk_tokens=target_tokens,
         chunk_overlap_tokens=overlap_tokens,
+        config=cfg,
     )
     doc["storedFilePath"] = stored_path
     doc_chunks = [c for c in vector_db.get_all_chunks(user_id) if c["documentId"] == doc["id"]]
@@ -696,7 +698,7 @@ def rechunk_doc(doc_id: str):
     overlap_tokens = max(0, min(300, int(body.get("chunkOverlapTokens") or cfg.get("chunkOverlapTokens", 30))))
 
     updated = vector_db.rechunk_document(
-        doc_id, strategy, user_id=user_id, target_chunk_tokens=target_tokens, chunk_overlap_tokens=overlap_tokens
+        doc_id, strategy, user_id=user_id, target_chunk_tokens=target_tokens, chunk_overlap_tokens=overlap_tokens, config=cfg
     )
     if not updated:
         return jsonify({"error": "Document not found."}), 404
@@ -810,7 +812,7 @@ def query_rag():
     overrides = body.get("configOverrides") if isinstance(body.get("configOverrides"), dict) else {}
     merged_keys = dict(cfg.get("apiKeys", {}))
     if isinstance(overrides.get("apiKeys"), dict):
-        for k in ("openai", "gemini", "anthropic", "groq", "openrouter"):
+        for k in ("openai", "gemini", "anthropic", "groq", "openrouter", "cohere", "jina"):
             v = overrides["apiKeys"].get(k)
             if isinstance(v, str) and v.strip() and not v.startswith("••••"):
                 merged_keys[k] = v.strip()
@@ -863,7 +865,7 @@ def query_rag_stream():
     overrides = body.get("configOverrides") if isinstance(body.get("configOverrides"), dict) else {}
     merged_keys = dict(cfg.get("apiKeys", {}))
     if isinstance(overrides.get("apiKeys"), dict):
-        for k in ("openai", "gemini", "anthropic", "groq", "openrouter"):
+        for k in ("openai", "gemini", "anthropic", "groq", "openrouter", "cohere", "jina"):
             v = overrides["apiKeys"].get(k)
             if isinstance(v, str) and v.strip() and not v.startswith("••••"):
                 merged_keys[k] = v.strip()
@@ -1082,7 +1084,7 @@ def update_config():
 
     updated_keys = dict(cfg.get("apiKeys", {}))
     if isinstance(incoming.get("apiKeys"), dict):
-        for k in ("openai", "gemini", "anthropic", "groq", "openrouter"):
+        for k in ("openai", "gemini", "anthropic", "groq", "openrouter", "cohere", "jina"):
             val = incoming["apiKeys"].get(k)
             if isinstance(val, str) and not val.startswith("••••"):
                 updated_keys[k] = val.strip()
