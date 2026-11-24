@@ -223,6 +223,12 @@ export const App: React.FC = () => {
   );
 
   const [isExecuting, setIsExecuting] = useState(false);
+  const [streamingState, setStreamingState] = useState<{
+    stage: number;
+    stageLabel: string;
+    partialAnswer: string;
+    chunkCount: number;
+  } | null>(null);
   const [activeStageIndex, setActiveStageIndex] = useState(0);
   const [statusMessage, setStatusMessage] = useState<string>(
     'SQLITE3 WAL + HNSW SYNCED'
@@ -411,14 +417,141 @@ export const App: React.FC = () => {
 
   const handleExecuteQuery = async (prompt: string) => {
     setIsExecuting(true);
-    setStatusMessage('RESHAPING PROMPT & TRAVERSING HNSW...');
+    setStreamingState({
+      stage: 1,
+      stageLabel:
+        'Stage 01 // Small LLM Reshaping Prompt & Expanding Domain Concepts...',
+      partialAnswer: '',
+      chunkCount: 0,
+    });
+    setStatusMessage('STREAMING AGENTIC RAG PIPELINE...');
 
     for (let s = 3; s <= 5; s++) {
       setActiveStageIndex(s);
     }
 
+    const commitFinalResult = async (
+      result: AgenticRagResponse & { chatSessions?: ChatSession[] }
+    ) => {
+      setLatestQuery(result);
+      if (result.chatId) {
+        setActiveChatId(result.chatId);
+      }
+      if (result.chatSessions) {
+        setChatSessions(result.chatSessions);
+      }
+      setQueryHistory((prev) => [
+        result,
+        ...prev.filter((q) => q.queryId !== result.queryId),
+      ]);
+      setStatusMessage(
+        `ANSWER STREAMED IN ${result.metrics.latencyBreakdown.totalMs} MS`
+      );
+      await fetchFullState();
+    };
+
     try {
-      const resp = await authFetch('/api/query', {
+      const resp = await authFetch('/api/query/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({
+          prompt,
+          chatId: activeChatId || undefined,
+        }),
+      });
+
+      const contentType = resp.headers.get('content-type') || '';
+      if (resp.ok && resp.body && contentType.includes('text/event-stream')) {
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let sseBuffer = '';
+        let receivedDone = false;
+
+        const processEventBlock = async (block: string) => {
+          const lines = block.split(/\r?\n/);
+          let eventName = 'message';
+          const dataLines: string[] = [];
+          for (const ln of lines) {
+            if (ln.startsWith('event:')) {
+              eventName = ln.slice(6).trim();
+            } else if (ln.startsWith('data:')) {
+              dataLines.push(ln.slice(5).trim());
+            }
+          }
+          if (dataLines.length === 0) return;
+          const payloadStr = dataLines.join('\n');
+          let parsed: Record<string, unknown>;
+          try {
+            parsed = JSON.parse(payloadStr);
+          } catch {
+            return;
+          }
+
+          if (eventName === 'stage') {
+            const st = Number(parsed.stage || 1);
+            const lbl = String(parsed.label || '');
+            setStreamingState((prev) => ({
+              stage: st,
+              stageLabel: lbl || prev?.stageLabel || '',
+              partialAnswer: prev?.partialAnswer || '',
+              chunkCount: prev?.chunkCount || 0,
+            }));
+          } else if (eventName === 'retrieval') {
+            const cnt = Number(parsed.chunkCount || 0);
+            setStreamingState((prev) => ({
+              stage: prev?.stage || 3,
+              stageLabel: prev?.stageLabel || '',
+              partialAnswer: prev?.partialAnswer || '',
+              chunkCount: cnt,
+            }));
+          } else if (eventName === 'token') {
+            const delta = String(parsed.delta || '');
+            if (delta) {
+              setStreamingState((prev) => ({
+                stage: 4,
+                stageLabel:
+                  prev?.stageLabel ||
+                  'Stage 04 // Streaming Grounded Answer...',
+                partialAnswer: (prev?.partialAnswer || '') + delta,
+                chunkCount: prev?.chunkCount || 0,
+              }));
+            }
+          } else if (eventName === 'done') {
+            receivedDone = true;
+            await commitFinalResult(
+              parsed as unknown as AgenticRagResponse & {
+                chatSessions?: ChatSession[];
+              }
+            );
+          }
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          const frames = sseBuffer.split(/\r?\n\r?\n/);
+          sseBuffer = frames.pop() || '';
+          for (const frame of frames) {
+            if (frame.trim()) {
+              await processEventBlock(frame);
+            }
+          }
+        }
+        if (sseBuffer.trim()) {
+          await processEventBlock(sseBuffer);
+        }
+
+        if (receivedDone) {
+          return;
+        }
+      }
+
+      // Automatic fallback to atomic POST /api/query if SSE stream is unavailable
+      const fallbackResp = await authFetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -426,23 +559,13 @@ export const App: React.FC = () => {
           chatId: activeChatId || undefined,
         }),
       });
-      if (resp.ok) {
+      if (fallbackResp.ok) {
         const result: AgenticRagResponse & { chatSessions?: ChatSession[] } =
-          await resp.json();
-        setLatestQuery(result);
-        if (result.chatId) {
-          setActiveChatId(result.chatId);
-        }
-        if (result.chatSessions) {
-          setChatSessions(result.chatSessions);
-        }
-        setQueryHistory((prev) => [result, ...prev]);
-        await fetchFullState();
-        setStatusMessage(
-          `ANSWER SYNTHESIZED IN ${result.metrics.latencyBreakdown.totalMs} MS`
-        );
+          await fallbackResp.json();
+        await commitFinalResult(result);
       }
     } finally {
+      setStreamingState(null);
       setIsExecuting(false);
     }
   };
@@ -1248,6 +1371,7 @@ export const App: React.FC = () => {
                     documents={documents}
                     chunks={chunks}
                     isExecuting={isExecuting}
+                    streamingState={streamingState}
                     onExecuteQuery={handleExecuteQuery}
                     onCreateChat={handleCreateChat}
                     onSelectChat={handleSelectChat}

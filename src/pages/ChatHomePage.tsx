@@ -38,6 +38,12 @@ interface ChatHomePageProps {
   documents?: IngestedDocument[];
   chunks?: Array<Omit<DocumentChunk, 'embedding' | 'sparseTerms'>>;
   isExecuting: boolean;
+  streamingState?: {
+    stage: number;
+    stageLabel: string;
+    partialAnswer: string;
+    chunkCount: number;
+  } | null;
   onExecuteQuery: (prompt: string) => Promise<void>;
   onCreateChat?: (initialTitle?: string) => Promise<void>;
   onSelectChat?: (chatId: string) => void;
@@ -85,6 +91,7 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
   documents = [],
   chunks = [],
   isExecuting,
+  streamingState = null,
   onExecuteQuery,
   onCreateChat,
   onRenameChat,
@@ -147,9 +154,17 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
   useEffect(() => {
     const el = chatScrollRef.current;
     if (el) {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: streamingState?.partialAnswer ? 'auto' : 'smooth',
+      });
     }
-  }, [visibleTurns.length, isExecuting, pendingPrompt]);
+  }, [
+    visibleTurns.length,
+    isExecuting,
+    pendingPrompt,
+    streamingState?.partialAnswer,
+  ]);
 
   // Auto-scroll the Floating Document Preview Window directly to the highlighted passage first
   useEffect(() => {
@@ -950,7 +965,9 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                       className="font-display"
                       style={{ fontSize: '0.98rem', fontWeight: 700 }}
                     >
-                      {elapsedMs < 850
+                      {streamingState?.stageLabel
+                        ? streamingState.stageLabel
+                        : elapsedMs < 850
                         ? `Stage 01 // Small LLM Reshaping Prompt & Expanding Domain Concepts...`
                         : elapsedMs < 1700
                         ? `Stage 02 // Searching 3-Layer HNSW Graph + BM25+ Lexical Index...`
@@ -962,13 +979,20 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                       className="font-mono"
                       style={{ fontSize: '0.72rem', color: 'var(--ink-muted)' }}
                     >
-                      RAG_BUDDY IS GENERATING YOUR CITED RESPONSE
+                      {streamingState?.partialAnswer
+                        ? `LIVE SSE STREAMING${
+                            streamingState.chunkCount > 0
+                              ? ` • ${streamingState.chunkCount} VERIFIED CHUNKS`
+                              : ''
+                          }`
+                        : 'RAG_BUDDY IS GENERATING YOUR CITED RESPONSE'}
                     </div>
                   </div>
                 </div>
 
                 <span className="clay-tag clay-tag-terracotta">
-                  GENERATING • {(elapsedMs / 1000).toFixed(1)}s
+                  {streamingState?.partialAnswer ? 'STREAMING' : 'GENERATING'} •{' '}
+                  {(elapsedMs / 1000).toFixed(1)}s
                 </span>
               </div>
 
@@ -981,12 +1005,14 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                 }}
               >
                 {[
-                  { label: '01 RESHAPE', threshold: 0 },
-                  { label: '02 HNSW + BM25+', threshold: 850 },
-                  { label: '03 CRAG RERANK', threshold: 1700 },
-                  { label: '04 LLM SYNTHESIS', threshold: 2500 },
+                  { label: '01 RESHAPE', stageNum: 1, threshold: 0 },
+                  { label: '02 HNSW + BM25+', stageNum: 2, threshold: 850 },
+                  { label: '03 CRAG RERANK', stageNum: 3, threshold: 1700 },
+                  { label: '04 SSE STREAM', stageNum: 4, threshold: 2500 },
                 ].map((st, sIdx) => {
-                  const isActiveOrDone = elapsedMs >= st.threshold;
+                  const isActiveOrDone = streamingState
+                    ? streamingState.stage >= st.stageNum
+                    : elapsedMs >= st.threshold;
                   return (
                     <div
                       key={sIdx}
@@ -1012,12 +1038,24 @@ export const ChatHomePage: React.FC<ChatHomePageProps> = ({
                 })}
               </div>
 
-              {/* Animated Shimmer Skeleton Lines */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                <div className="answering-shimmer-line" style={{ width: '92%' }} />
-                <div className="answering-shimmer-line" style={{ width: '78%' }} />
-                <div className="answering-shimmer-line" style={{ width: '64%' }} />
-              </div>
+              {/* Live Streamed Markdown Tokens OR Shimmer Skeleton Lines while retrieving */}
+              {streamingState?.partialAnswer ? (
+                <div
+                  style={{
+                    paddingTop: 6,
+                    borderTop: '1px solid var(--clay-border-light)',
+                  }}
+                >
+                  <RichMarkdownRenderer content={streamingState.partialAnswer} />
+                  <span className="sse-streaming-cursor" aria-hidden="true" />
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                  <div className="answering-shimmer-line" style={{ width: '92%' }} />
+                  <div className="answering-shimmer-line" style={{ width: '78%' }} />
+                  <div className="answering-shimmer-line" style={{ width: '64%' }} />
+                </div>
+              )}
             </motion.div>
           </div>
         )}

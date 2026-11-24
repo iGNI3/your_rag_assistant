@@ -17,7 +17,7 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from flask import Flask, request, jsonify, g, make_response
+from flask import Flask, Response, request, jsonify, g, make_response, stream_with_context
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
 
@@ -27,6 +27,7 @@ from llm_engine import (
     OFFLINE_MODEL_PORTAL_CATALOG,
     reshape_user_prompt,
     scan_local_model_path,
+    stream_synthesize_answer_and_verify,
     synthesize_answer_and_verify,
     validate_local_endpoint_url,
 )
@@ -819,6 +820,180 @@ def query_rag():
     resp_obj = execute_rag_pipeline(prompt, merged_config, user_id=user_id, chat_id=chat_id)
     resp_obj["chatSessions"] = sql_db.list_chat_sessions(user_id)
     return jsonify(resp_obj)
+
+
+def _format_sse_event(event_name: str, data_obj: Any) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(data_obj, ensure_ascii=False)}\n\n"
+
+
+@app.route("/api/query/stream", methods=["POST"])
+@require_auth
+def query_rag_stream():
+    user_id = g.current_user["userId"]
+    cfg = get_user_config(user_id)
+    body = request.get_json(force=True, silent=True) or {}
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"error": "Prompt is required."}), 400
+    if len(prompt) > MAX_PROMPT_CHARS:
+        return jsonify({"error": f"Prompt exceeds maximum length of {MAX_PROMPT_CHARS} characters."}), 400
+
+    chat_id = body.get("chatId")
+    if isinstance(chat_id, str):
+        chat_id = chat_id.strip() or None
+    else:
+        chat_id = None
+
+    overrides = body.get("configOverrides") if isinstance(body.get("configOverrides"), dict) else {}
+    merged_keys = dict(cfg.get("apiKeys", {}))
+    if isinstance(overrides.get("apiKeys"), dict):
+        for k in ("openai", "gemini", "anthropic", "groq", "openrouter"):
+            v = overrides["apiKeys"].get(k)
+            if isinstance(v, str) and v.strip() and not v.startswith("••••"):
+                merged_keys[k] = v.strip()
+
+    merged_eps = dict(cfg.get("localEndpoints", {}))
+    if isinstance(overrides.get("localEndpoints"), dict):
+        for ep_key in ("ollamaUrl", "lmStudioUrl"):
+            raw_ep = overrides["localEndpoints"].get(ep_key)
+            if isinstance(raw_ep, str) and raw_ep.strip():
+                validated_ep = validate_local_endpoint_url(raw_ep)
+                if not validated_ep:
+                    return jsonify({"error": f"Invalid or disallowed local endpoint URL for {ep_key}."}), 400
+                merged_eps[ep_key] = validated_ep
+
+    merged_config = {
+        **cfg,
+        **overrides,
+        "apiKeys": merged_keys,
+        "localEndpoints": merged_eps,
+    }
+
+    def event_stream():
+        try:
+            yield _format_sse_event("stage", {
+                "stage": 1,
+                "label": "Stage 01 // Small LLM Reshaping Prompt & Expanding Domain Concepts...",
+            })
+
+            all_chunks = vector_db.get_all_chunks(user_id)
+            user_docs = vector_db.get_all_documents(user_id)
+
+            def _is_seed(c: Dict[str, Any]) -> bool:
+                did = str(c.get("documentId") or "").lower()
+                dtitle = str(c.get("documentTitle") or "").lower()
+                markers = (
+                    "doc_hnsw_architecture", "doc_chunking_optimization",
+                    "doc_agentic_reshaper_ocr", "doc_small_llm_crag_ocr",
+                    "seed_01", "seed_02", "seed_03",
+                    "hnsw vector indexing & hybrid rrf",
+                    "adaptive chunking strategy benchmark",
+                    "small llm prompt reshaping, crag & multimodal ocr",
+                )
+                return any(m in did or m in dtitle for m in markers)
+
+            custom_chunks = [c for c in all_chunks if not _is_seed(c)]
+            active_pool = custom_chunks if custom_chunks else all_chunks
+            corpus_keywords: List[str] = []
+            for c in active_pool:
+                for kw in c.get("keywords", []):
+                    if kw not in corpus_keywords:
+                        corpus_keywords.append(kw)
+            corpus_keywords = corpus_keywords[:50]
+
+            recent_history = (
+                sql_db.load_query_history(user_id, limit=3, chat_id=chat_id)
+                if chat_id
+                else []
+            )
+
+            prompt_reshape = reshape_user_prompt(
+                prompt,
+                corpus_keywords,
+                merged_config,
+                recent_history=recent_history,
+            )
+
+            yield _format_sse_event("stage", {
+                "stage": 2,
+                "label": "Stage 02 // Searching 3-Layer HNSW Graph + BM25+ Lexical Index...",
+            })
+
+            retrieval = vector_db.hybrid_retrieve_and_rerank(
+                original_prompt=prompt,
+                reshaped_primary_query=prompt_reshape["reshapedPrimaryQuery"],
+                sub_queries=prompt_reshape["subQueries"],
+                hyde_document=prompt_reshape["hydeDocument"],
+                config=merged_config,
+                user_id=user_id,
+            )
+
+            yield _format_sse_event("stage", {
+                "stage": 3,
+                "label": "Stage 03 // Cross-Encoder Reranking & CRAG Relevance Gating...",
+            })
+
+            yield _format_sse_event("retrieval", {
+                "chunkCount": len(retrieval["retrievedChunks"]),
+                "prunedCount": len(retrieval["prunedNoiseChunks"]),
+                "detectedIntent": prompt_reshape.get("detectedIntent"),
+            })
+
+            yield _format_sse_event("stage", {
+                "stage": 4,
+                "label": f"Stage 04 // Streaming Grounded Answer via {merged_config.get('generatorModel', 'LLM')}...",
+            })
+
+            synthesis: Optional[Dict[str, Any]] = None
+            for ev_type, ev_val in stream_synthesize_answer_and_verify(
+                prompt_reshape=prompt_reshape,
+                retrieved_chunks=retrieval["retrievedChunks"],
+                pruned_noise_chunks=retrieval["prunedNoiseChunks"],
+                config=merged_config,
+                timings=retrieval["timings"],
+                user_documents=user_docs,
+                recent_history=recent_history,
+            ):
+                if ev_type == "token":
+                    yield _format_sse_event("token", {"delta": ev_val})
+                elif ev_type == "result":
+                    synthesis = ev_val
+
+            if synthesis is None:
+                raise RuntimeError("Synthesis stream completed without final payload.")
+
+            resp_obj = {
+                "queryId": f"qry_{int(time.time() * 1000)}_{secrets.token_hex(4)}",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "promptReshape": prompt_reshape,
+                "retrievedChunks": retrieval["retrievedChunks"],
+                "prunedNoiseChunks": retrieval["prunedNoiseChunks"],
+                "queryCoords2D": retrieval["queryCoords2D"],
+                "hydeCoords2D": retrieval["hydeCoords2D"],
+                "answer": synthesis["answer"],
+                "citations": synthesis["citations"],
+                "claimVerifications": synthesis["claimVerifications"],
+                "metrics": synthesis["metrics"],
+                "activeConfig": mask_config_for_client(merged_config),
+            }
+            resolved_chat_id = sql_db.record_query_run(resp_obj, user_id=user_id, chat_id=chat_id)
+            resp_obj["chatId"] = resolved_chat_id
+            resp_obj["chatSessions"] = sql_db.list_chat_sessions(user_id)
+
+            yield _format_sse_event("done", resp_obj)
+        except Exception as exc:
+            security_logger.exception("SSE query stream error")
+            yield _format_sse_event("error", {"error": str(exc) or "Streaming synthesis failed."})
+
+    return Response(
+        stream_with_context(event_stream()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.route("/api/query/history", methods=["DELETE"])

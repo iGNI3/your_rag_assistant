@@ -44,7 +44,7 @@ flowchart TD
 ### Step-by-Step Query Lifecycle
 1. **User Authentication & Workspace Isolation**: Every request is authenticated with a per-user session bearer token (`Authorization: Bearer <token>`). Documents, vector chunks, chat sessions, query history, saved findings, and API keys are strictly isolated by `user_id`.
 2. **Document Extraction & Normalization (`backend/extractor.py`)**:
-   - Extracts raw text from **PDF** (`pypdf`), **Word** (`python-docx`), **Excel/CSV** (`openpyxl` / `csv`), **HTML** (`BeautifulSoup`), **Images/OCR** (`Pillow` + `pytesseract`), and **Markdown/JSON/Text**.
+   - Extracts raw text and native Markdown tables from **PDF** via **`pdfplumber`** (native X/Y coordinate layout + table grid extraction with automatic `pypdf` fallback), **Word** (`python-docx`), **Excel/CSV** (`openpyxl` / `csv`), **HTML** (`BeautifulSoup`), **Images/OCR** (`Pillow` + `pytesseract`), and **Markdown/JSON/Text**.
    - Runs `optimize_and_clean_text()` to normalize Unicode ligatures, de-hyphenate wrapped words, strip pagination noise, and compute extraction telemetry.
 3. **5-Strategy Adaptive Chunking (`backend/chunker.py`)**:
    - Benchmarks all 5 strategies (**Semantic Inflection**, **Hierarchical Parent-Child**, **Atomic Fact Propositions**, **Structural AST & Table**, and **Sliding Window**) on coherence, boundary sharpness, density, and uniformity, automatically selecting the winning strategy (or letting the user override it).
@@ -59,9 +59,9 @@ flowchart TD
    - Combines HNSW dense ranks and BM25+ sparse ranks using **Reciprocal Rank Fusion (RRF)** and **Maximal Marginal Relevance (MMR)** diversity filtering.
    - Prioritizes user-uploaded documents over starter demo whitepapers so custom documents always surface first.
    - Reranks top candidates via Cross-Encoder scoring, filters irrelevant noise through the **Corrective RAG (CRAG) Noise Gate**, and stitches adjacent neighbor chunks so multi-paragraph clauses are never cut off mid-sentence.
-7. **Grounded Synthesis & Verification**:
-   - Routes generation to the user's configured provider (**Gemini**, **OpenAI**, **Groq**, **OpenRouter**, **Ollama**, **LM Studio**, or built-in offline extractive synthesis) with automatic model-slug normalization and fallback retries.
-   - Synthesizes a structured, explanatory answer with a **Markdown Summary Table** and inline `[Source X]` citations, followed by Self-RAG claim verification and evaluation metrics (`NDCG@K`, `MRR`, `Groundedness`, `Optimization Index`).
+7. **Grounded Synthesis, SSE Live Token Streaming & Verification**:
+   - Routes generation to the user's configured provider (**Gemini**, **OpenAI**, **Groq**, **OpenRouter**, **Anthropic**, **Ollama**, **LM Studio**, or built-in offline extractive synthesis) with automatic model-slug normalization and fallback retries.
+   - Streams real-time stage events (`stage`, `retrieval`), live token deltas (`token`), and finalized telemetry (`done`) over **Server-Sent Events (`POST /api/query/stream`)** so Markdown tables, headings, and inline `[Source X]` citations type out live in the UI, followed by Self-RAG claim verification and evaluation metrics (`NDCG@K`, `MRR`, `Groundedness`, `Optimization Index`).
 
 ---
 
@@ -78,8 +78,8 @@ A deliberate engineering decision was made to build `RAG_BUDDY`'s core pipeline 
 | **Multi-Provider Support Without SDK Lock-In** | Direct HTTP JSON calls support Gemini, OpenAI, Groq, OpenRouter, Ollama, and LM Studio with automatic slug normalization and retry fallbacks. | Requires installing and maintaining separate partner SDKs (`langchain-google-genai`, `langchain-openai`, `langchain-groq`, etc.). |
 | **Custom Domain & UI Precision** | Custom features like per-user multi-tenant SQLite/PostgreSQL scoping, domain concept expansion, neighbor-chunk stitching, and exact character-offset highlighting in the Document Reader take 15–40 lines of clear Python. | Fighting framework abstractions often requires more boilerplate than writing the logic directly. |
 
-### Where Specialized Libraries *Do* Help (Future Optional Upgrades)
-- **PDF Table Extraction**: LangChain itself uses `pypdf` under the hood (`PyPDFLoader`), so LangChain would not have solved complex PDF table grids on its own. If native X/Y coordinate PDF table extraction is needed later, plugging **`pdfplumber`**, **`PyMuPDF` (`fitz`)**, or **`Docling`** directly into `backend/extractor.py` is a clean 1-file upgrade.
+### Where Specialized Libraries *Do* Help
+- **PDF Table Extraction**: LangChain itself uses `pypdf` under the hood (`PyPDFLoader`), so LangChain would not have solved complex PDF table grids on its own. Instead, we plugged **`pdfplumber`** directly into `backend/extractor.py` for lightweight (~40 MB RAM), native X/Y coordinate Markdown table extraction that still fits Render's 512 MB free tier (whereas `Docling` requires 1.5–3 GB RAM + PyTorch).
 - **Neural Embeddings & Managed Vector Search**: Plugging Gemini/OpenAI embeddings + `pgvector` directly into Neon PostgreSQL can be added in ~30 lines of Python without adopting a heavy orchestration framework.
 - **When LangChain / LangGraph Makes Sense**: When an app needs 30+ pre-built SaaS connectors (Confluence, SharePoint, Notion, Jira, Slack) or complex branching multi-agent state machines (`LangGraph`).
 
@@ -151,7 +151,8 @@ Handles raw file parsing across 10+ formats and prepares clean text before chunk
 
 | Function | Responsibility in the RAG Pipeline |
 | :--- | :--- |
-| `extract_document_from_bytes()` | Master file router: inspects file extension/MIME type and extracts raw text from **PDF** (`pypdf`), **DOCX** (`python-docx`, including Markdown table conversion), **XLSX/CSV/TSV** (`openpyxl` / `csv`), **HTML/XML** (`BeautifulSoup`), **Images** (OCR), and **Markdown/JSON/Text**. |
+| `_extract_pdf_with_pdfplumber()` & `_table_rows_to_markdown()` | Native X/Y bounding-box PDF layout & table extractor via **`pdfplumber`**. Deduplicates nested outer wrapper boxes, converts native PDF tables into clean Markdown pipe tables, and interleaves prose and tables in true top-to-bottom reading order. |
+| `extract_document_from_bytes()` | Master file router: inspects file extension/MIME type and extracts raw text/tables from **PDF** (`pdfplumber` with `pypdf` fallback), **DOCX** (`python-docx`, including Markdown table conversion), **XLSX/CSV/TSV** (`openpyxl` / `csv`), **HTML/XML** (`BeautifulSoup`), **Images** (OCR), and **Markdown/JSON/Text**. |
 | `_run_image_ocr()` | Runs visual OCR on uploaded images (`.png`, `.jpg`, `.webp`, `.tiff`) using `Pillow` + `pytesseract` (if installed), with embedded metadata and readable byte-stream fallback. |
 | `optimize_and_clean_text()` | Normalizes Unicode ligatures (`fi`, `fl`, curly quotes), fixes cross-line hyphenation (`optim-\nization` -> `optimization`), strips control bytes and standalone page footers, compacts whitespace, and computes extraction telemetry (`noiseRemovedPct`, `detectedTables`, `detectedHeadings`, `estimatedTokens`). |
 
@@ -191,8 +192,8 @@ Handles query intelligence, external/local LLM routing, answer synthesis, and Se
 | `_infer_domain_expansion_terms()` | Maps everyday user questions (e.g., `"LASIK surgery next month"`) to formal policy/domain terminology (`"refractive error"`, `"cosmetic or plastic surgery"`, `"Code Excl08"`, `"waiting period"`, `"day care"`). |
 | `reshape_user_prompt()` | Small LLM Prompt Reshaper: classifies query intent and complexity, strips conversational noise, incorporates 3-turn chat history, and generates the reshaped primary query, step-back query, 3 sub-queries, and HyDE document. |
 | `_resolve_effective_provider_and_model()` & `_normalize_gemini_model_candidates()` | Automatically routes API keys across providers and normalizes human-readable model labels (e.g., `"Gemini 2.5 Flash Lite"` -> `"gemini-2.5-flash-lite"`) with automatic fallback slugs. |
-| `call_external_llm_if_available()` & `_http_post_json()` | Zero-SDK HTTP client calling **Gemini**, **OpenAI**, **Groq**, **OpenRouter**, **Ollama**, and **LM Studio** via standard JSON POST requests. |
-| `synthesize_answer_and_verify()` | Sends the retrieved context, chat history, and 4-part analyst prompt (including Markdown Summary Table instructions and `[Source X]` citation rules) to the active LLM; falls back to `_build_extractive_direct_answer()` if offline; then computes **Self-RAG claim verifications** and RAG metrics (`NDCG@K`, `MRR`, `Groundedness`, `Optimization Index`). |
+| `call_external_llm_if_available()` & `stream_external_llm_if_available()` | Zero-SDK HTTP clients (atomic JSON + live SSE/NDJSON streaming) calling **Gemini**, **OpenAI**, **Groq**, **OpenRouter**, **Anthropic**, **Ollama**, and **LM Studio**. |
+| `synthesize_answer_and_verify()` & `stream_synthesize_answer_and_verify()` | Sends the retrieved context (wrapped in `<retrieved_sources>` prompt-injection delimiters), chat history, and 4-part analyst prompt (including Markdown Summary Table instructions and `[Source X]` citation rules) to the active LLM—streaming live token deltas in SSE mode; falls back to `_build_extractive_direct_answer()` if offline; then computes **Self-RAG claim verifications** and RAG metrics (`NDCG@K`, `MRR`, `Groundedness`, `Optimization Index`). |
 | `scan_local_model_path()` & `inspect_model_file()` | Scans local directories for offline `.gguf` / `.safetensors` models for the Settings & Offline Model Portal. |
 
 ### 6.5 `backend/storage_db.py` — Dual-Engine PostgreSQL & SQLite3 Persistence Vault
@@ -218,7 +219,7 @@ Exposes all HTTP endpoints, enforces per-user authentication, and wires the full
 | `execute_rag_pipeline()` | Master RAG orchestrator: loads 3-turn memory for the active `chat_id`, calls `reshape_user_prompt()` -> `hybrid_retrieve_and_rerank()` -> `synthesize_answer_and_verify()`, and persists the turn via `record_query_run()`. |
 | `ingest_upload()` (`POST /api/ingest/upload`) & `ingest_text()` (`POST /api/ingest/text`) | Accepts file uploads or raw text, runs `extractor.py`, indexes into `vectordb.py`, and returns updated workspace telemetry. |
 | `rechunk_doc()` (`POST /api/documents/<id>/rechunk`) & `delete_doc()` (`DELETE /api/documents/<id>`) | Re-chunks any document live with a new strategy or deletes it from both HNSW and the SQL vault. |
-| `query_rag()` (`POST /api/query`) | Runs `execute_rag_pipeline()` for the user's prompt and active `chatId`, returning the synthesized answer, citations, telemetry, and updated `chatSessions`. |
+| `query_rag()` (`POST /api/query`) & `query_rag_stream()` (`POST /api/query/stream`) | Runs the full RAG pipeline for the user's prompt and active `chatId`. `/api/query/stream` emits live Server-Sent Events (`stage`, `retrieval`, `token`, `done`) with `X-Accel-Buffering: no` for instant token-by-token typing; `/api/query` returns the atomic JSON payload. |
 | `get_chats()`, `create_chat()`, `rename_chat()`, `remove_chat()` (`/api/chats`) | REST endpoints powering the sidebar Chat History list, `+ NEW CHAT`, inline rename, and delete. |
 | `get_state()` (`GET /api/state`) | Hydrates the frontend with the signed-in user's documents, chunks, HNSW stats, config, chat sessions, query history, and saved findings. |
 
