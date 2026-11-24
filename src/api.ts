@@ -16,16 +16,27 @@ export function apiUrl(path: string): string {
   return API_BASE_URL ? `${API_BASE_URL}${normalized}` : normalized;
 }
 
+export const USE_COOKIE_CREDENTIALS =
+  !API_BASE_URL ||
+  String(import.meta.env.VITE_USE_COOKIE_AUTH || '').toLowerCase() === 'true';
+
 export function getStoredAuthToken(): string | null {
+  if (USE_COOKIE_CREDENTIALS) {
+    return null;
+  }
   return localStorage.getItem(AUTH_TOKEN_KEY);
 }
 
 export function setStoredAuthToken(token: string | null) {
-  if (token) {
-    localStorage.setItem(AUTH_TOKEN_KEY, token);
-  } else {
+  if (USE_COOKIE_CREDENTIALS || !token) {
     localStorage.removeItem(AUTH_TOKEN_KEY);
+  } else {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
   }
+}
+
+export function getAuthFetchCredentials(): RequestCredentials | undefined {
+  return USE_COOKIE_CREDENTIALS ? 'include' : undefined;
 }
 
 export async function authFetch(
@@ -37,8 +48,10 @@ export async function authFetch(
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
+  const credentials = init.credentials ?? getAuthFetchCredentials();
   return fetch(apiUrl(input), {
     ...init,
     headers,
+    ...(credentials ? { credentials } : {}),
   });
 }

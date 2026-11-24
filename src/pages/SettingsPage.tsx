@@ -490,7 +490,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       <input
                         type="password"
                         required
-                        minLength={6}
+                        minLength={8}
                         className="clay-input"
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
@@ -511,7 +511,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       <input
                         type="password"
                         required
-                        minLength={6}
+                        minLength={8}
                         className="clay-input"
                         value={confirmNewPassword}
                         onChange={(e) => setConfirmNewPassword(e.target.value)}

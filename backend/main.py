@@ -1,20 +1,25 @@
 import json
+import logging
 import os
 import random
 import re
+import secrets
 import sys
+import threading
 import time
 import urllib.request
+from collections import deque
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Deque
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify, g, make_response
 from flask_cors import CORS
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from extractor import extract_document_from_bytes, optimize_and_clean_text
 from vectordb import HybridVectorDatabase
@@ -23,25 +28,137 @@ from llm_engine import (
     reshape_user_prompt,
     scan_local_model_path,
     synthesize_answer_and_verify,
+    validate_local_endpoint_url,
 )
 from seed_corpus import SEED_CORPUS_DOCUMENTS
 
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+security_logger = logging.getLogger("clayrag.security")
+
 WORKSPACE_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
 DATA_DIR = os.environ.get("CLAYRAG_DATA_DIR") or os.path.join(WORKSPACE_ROOT, "data")
+MAX_UPLOAD_MB = max(1, int(os.environ.get("MAX_UPLOAD_MB", "25")))
+MAX_USER_STORAGE_BYTES = max(5, int(os.environ.get("MAX_USER_STORAGE_MB", "100"))) * 1024 * 1024
+MAX_USER_DOCS = max(5, int(os.environ.get("MAX_USER_DOCS", "100")))
+MAX_PROMPT_CHARS = 4000
+SESSION_COOKIE_NAME = "clayrag_session"
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 _raw_origins = (os.environ.get("ALLOWED_ORIGINS") or "*").strip()
 _cors_origins: Any = "*" if _raw_origins == "*" else [o.strip() for o in _raw_origins.split(",") if o.strip()]
+_cors_supports_credentials = _cors_origins != "*"
+if _cors_origins == "*" and os.environ.get("RENDER"):
+    security_logger.warning("ALLOWED_ORIGINS is set to '*'; restrict this to your frontend origin in production.")
+
 CORS(
     app,
     resources={r"/api/*": {"origins": _cors_origins}},
     allow_headers=["Content-Type", "Authorization"],
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    supports_credentials=_cors_supports_credentials,
 )
+
+# Thread-safe sliding-window rate limiter for auth endpoints
+_rate_limit_lock = threading.Lock()
+_rate_limit_buckets: Dict[str, Deque[float]] = {}
+
+
+def _get_client_ip() -> str:
+    xff = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    return xff or (request.remote_addr or "unknown")
+
+
+def _check_rate_limit(bucket: str, key: str, max_requests: int, window_seconds: int) -> bool:
+    if os.environ.get("DISABLE_RATE_LIMIT", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    now = time.monotonic()
+    full_key = f"{bucket}:{key}"
+    with _rate_limit_lock:
+        q = _rate_limit_buckets.get(full_key)
+        if q is None:
+            q = deque()
+            _rate_limit_buckets[full_key] = q
+        cutoff = now - window_seconds
+        while q and q[0] < cutoff:
+            q.popleft()
+        if len(q) >= max_requests:
+            return False
+        q.append(now)
+        return True
+
+
+def _is_https_request() -> bool:
+    proto = (request.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
+    return request.is_secure or proto == "https"
+
+
+def _attach_session_cookie(resp: Any, token: str) -> Any:
+    try:
+        ttl_days = max(1, min(30, int(os.environ.get("SESSION_TTL_DAYS", "7"))))
+    except ValueError:
+        ttl_days = 7
+    is_https = _is_https_request()
+    resp.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        max_age=ttl_days * 86400,
+        httponly=True,
+        secure=is_https,
+        samesite="None" if (is_https and _cors_supports_credentials) else "Lax",
+        path="/",
+    )
+    return resp
+
+
+def _clear_session_cookie(resp: Any) -> Any:
+    is_https = _is_https_request()
+    resp.delete_cookie(
+        SESSION_COOKIE_NAME,
+        path="/",
+        secure=is_https,
+        samesite="None" if (is_https and _cors_supports_credentials) else "Lax",
+    )
+    return resp
+
+
+@app.after_request
+def _add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if _is_https_request():
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def _handle_file_too_large(_err):
+    return jsonify({"error": f"Upload exceeds maximum allowed size of {MAX_UPLOAD_MB} MB."}), 413
+
 
 vector_db = HybridVectorDatabase(DATA_DIR)
 sql_db = vector_db.sql_db
+
+
+def mask_config_for_client(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    masked_keys: Dict[str, str] = {}
+    for k, val in (cfg.get("apiKeys") or {}).items():
+        if isinstance(val, str) and val.startswith("••••"):
+            masked_keys[k] = val
+        elif isinstance(val, str) and len(val) >= 4:
+            masked_keys[k] = "••••••••" + val[-4:]
+        else:
+            masked_keys[k] = ""
+    return {
+        **cfg,
+        "apiKeys": masked_keys,
+    }
 
 
 @app.route("/", methods=["GET"])
@@ -52,7 +169,6 @@ def health_check():
         "service": "clayrag-python-backend",
         "version": "1.0.0",
         "databaseEngine": "postgresql" if sql_db.is_postgres else "sqlite",
-        "dataDir": DATA_DIR,
     })
 
 
@@ -73,7 +189,7 @@ def get_default_config() -> Dict[str, Any]:
             "ollamaUrl": "http://localhost:11434",
             "lmStudioUrl": "http://localhost:1234/v1",
         },
-        "offlineModelPath": os.path.join(WORKSPACE_ROOT, "models", "Qwen2.5-3B-Instruct-Q4_K_M.gguf"),
+        "offlineModelPath": "./models/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
         "defaultChunkStrategy": "semantic",
         "autoOptimizeChunking": True,
         "targetChunkTokens": 150,
@@ -199,7 +315,7 @@ def execute_rag_pipeline(
     )
 
     resp_obj = {
-        "queryId": f"qry_{int(time.time() * 1000)}_{random.randint(100, 999)}",
+        "queryId": f"qry_{int(time.time() * 1000)}_{secrets.token_hex(4)}",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "promptReshape": prompt_reshape,
         "retrievedChunks": retrieval["retrievedChunks"],
@@ -210,7 +326,7 @@ def execute_rag_pipeline(
         "citations": synthesis["citations"],
         "claimVerifications": synthesis["claimVerifications"],
         "metrics": synthesis["metrics"],
-        "activeConfig": dict(config_used),
+        "activeConfig": mask_config_for_client(config_used),
     }
 
     resolved_chat_id = sql_db.record_query_run(resp_obj, user_id=user_id, chat_id=chat_id)
@@ -218,15 +334,24 @@ def execute_rag_pipeline(
     return resp_obj
 
 
-# Ensure the demo admin account has starter data ready
-seed_user_workspace_if_empty("usr_demo_admin")
+# Seed demo admin workspace ONLY when demo mode is explicitly enabled
+if os.environ.get("ENABLE_DEMO_USER", "").strip().lower() in ("1", "true", "yes"):
+    seed_user_workspace_if_empty("usr_demo_admin")
 
 
 def _extract_bearer_token() -> Optional[str]:
     auth_hdr = request.headers.get("Authorization", "")
     if auth_hdr.lower().startswith("bearer "):
-        return auth_hdr[7:].strip()
-    return None
+        tok = auth_hdr[7:].strip()
+        if tok:
+            return tok
+    cookie_tok = (request.cookies.get(SESSION_COOKIE_NAME) or "").strip()
+    return cookie_tok or None
+
+
+def _is_current_admin() -> bool:
+    user = getattr(g, "current_user", None)
+    return bool(user and str(user.get("role") or "").upper() == "ADMIN")
 
 
 def require_auth(fn):
@@ -248,6 +373,11 @@ def require_auth(fn):
 
 @app.route("/api/auth/register", methods=["POST"])
 def auth_register():
+    client_ip = _get_client_ip()
+    if not _check_rate_limit("register_ip", client_ip, max_requests=5, window_seconds=900):
+        security_logger.warning("auth_register rate_limited ip=%s", client_ip)
+        return jsonify({"error": "Too many registration attempts. Please try again later."}), 429
+
     body = request.get_json(force=True, silent=True) or {}
     username = str(body.get("username") or "")
     display_name = str(body.get("displayName") or "")
@@ -257,35 +387,54 @@ def auth_register():
 
     user, err = sql_db.create_user(username, display_name, email, password)
     if err or not user:
+        security_logger.info(
+            "auth_register rejected ip=%s username=%s reason=%s",
+            client_ip,
+            username.strip().lower()[:32],
+            err or "failed",
+        )
         return jsonify({"error": err or "Registration failed."}), 400
 
     token = sql_db.create_session(user["userId"])
     if seed_starter:
         seed_user_workspace_if_empty(user["userId"])
 
-    return jsonify({
+    security_logger.info("auth_register success ip=%s user_id=%s", client_ip, user["userId"])
+    resp = make_response(jsonify({
         "success": True,
         "token": token,
         "user": user,
-    })
+    }))
+    return _attach_session_cookie(resp, token)
 
 
 @app.route("/api/auth/login", methods=["POST"])
 def auth_login():
+    client_ip = _get_client_ip()
     body = request.get_json(force=True, silent=True) or {}
     identifier = str(body.get("identifier") or body.get("username") or body.get("email") or "")
     password = str(body.get("password") or "")
+    norm_ident = identifier.strip().lower()[:64]
+
+    if not _check_rate_limit("login_ip", client_ip, max_requests=20, window_seconds=300) or (
+        norm_ident and not _check_rate_limit("login_ident", f"{client_ip}:{norm_ident}", max_requests=10, window_seconds=300)
+    ):
+        security_logger.warning("auth_login rate_limited ip=%s identifier=%s", client_ip, norm_ident)
+        return jsonify({"error": "Too many sign-in attempts. Please wait a few minutes and try again."}), 429
 
     user, err = sql_db.authenticate_user(identifier, password)
     if err or not user:
+        security_logger.warning("auth_login failed ip=%s identifier=%s", client_ip, norm_ident)
         return jsonify({"error": err or "Invalid credentials."}), 401
 
     token = sql_db.create_session(user["userId"])
-    return jsonify({
+    security_logger.info("auth_login success ip=%s user_id=%s", client_ip, user["userId"])
+    resp = make_response(jsonify({
         "success": True,
         "token": token,
         "user": user,
-    })
+    }))
+    return _attach_session_cookie(resp, token)
 
 
 @app.route("/api/auth/logout", methods=["POST"])
@@ -293,7 +442,8 @@ def auth_logout():
     token = _extract_bearer_token()
     if token:
         sql_db.delete_session(token)
-    return jsonify({"success": True})
+    resp = make_response(jsonify({"success": True}))
+    return _clear_session_cookie(resp)
 
 
 @app.route("/api/auth/me", methods=["GET"])
@@ -317,6 +467,7 @@ def update_account_profile():
     )
     if err or not updated:
         return jsonify({"error": err or "Could not update profile."}), 400
+    security_logger.info("account_profile_updated user_id=%s", user_id)
     return jsonify({"success": True, "user": updated})
 
 
@@ -329,9 +480,12 @@ def update_account_password():
         user_id=user_id,
         current_password=str(body.get("currentPassword") or ""),
         new_password=str(body.get("newPassword") or ""),
+        keep_token=g.auth_token,
     )
     if not ok:
+        security_logger.warning("account_password_change_failed user_id=%s", user_id)
         return jsonify({"error": msg}), 400
+    security_logger.info("account_password_changed user_id=%s", user_id)
     return jsonify({"success": True, "message": msg})
 
 
@@ -341,7 +495,9 @@ def delete_account():
     user_id = g.current_user["userId"]
     vector_db.purge_user_data_in_memory(user_id)
     deleted = sql_db.delete_user_account(user_id)
-    return jsonify({"success": deleted})
+    security_logger.info("account_deleted user_id=%s deleted=%s", user_id, deleted)
+    resp = make_response(jsonify({"success": deleted}))
+    return _clear_session_cookie(resp)
 
 
 # =============================================================================
@@ -379,15 +535,7 @@ def get_state():
 
     history = sql_db.load_query_history(user_id, 80)
     chat_sessions = sql_db.list_chat_sessions(user_id)
-
-    masked_keys = {}
-    for k, val in cfg.get("apiKeys", {}).items():
-        masked_keys[k] = ("••••••••" + val[-4:]) if val and len(val) >= 4 else ""
-
-    safe_config = {
-        **cfg,
-        "apiKeys": masked_keys,
-    }
+    safe_config = mask_config_for_client(cfg)
 
     return jsonify({
         "user": user,
@@ -399,7 +547,7 @@ def get_state():
         "queryHistory": history,
         "chatSessions": chat_sessions,
         "savedFindings": sql_db.list_saved_findings(user_id),
-        "databaseTelemetry": sql_db.get_database_telemetry(user_id),
+        "databaseTelemetry": sql_db.get_database_telemetry(user_id, is_admin=_is_current_admin()),
         "modelPortalCatalog": OFFLINE_MODEL_PORTAL_CATALOG,
     })
 
@@ -413,6 +561,10 @@ def ingest_upload():
     if not files:
         return jsonify({"error": "No files uploaded."}), 400
 
+    existing_doc_count = vector_db.get_document_count(user_id)
+    if existing_doc_count + len(files) > MAX_USER_DOCS:
+        return jsonify({"error": f"Document quota exceeded (max {MAX_USER_DOCS} documents per account)."}), 400
+
     auto_opt_raw = request.form.get("autoOptimize")
     if auto_opt_raw is not None:
         auto_opt = str(auto_opt_raw).lower() in ("true", "1", "yes")
@@ -420,13 +572,20 @@ def ingest_upload():
         auto_opt = bool(cfg.get("autoOptimizeChunking", True))
 
     preferred_strategy = request.form.get("strategy") or cfg.get("defaultChunkStrategy", "semantic")
-    target_tokens = int(request.form.get("targetChunkTokens") or cfg.get("targetChunkTokens", 150))
-    overlap_tokens = int(request.form.get("chunkOverlapTokens") or cfg.get("chunkOverlapTokens", 30))
+    target_tokens = max(40, min(1000, int(request.form.get("targetChunkTokens") or cfg.get("targetChunkTokens", 150))))
+    overlap_tokens = max(0, min(300, int(request.form.get("chunkOverlapTokens") or cfg.get("chunkOverlapTokens", 30))))
 
+    current_bytes = sql_db.get_user_uploads_bytes(user_id)
     ingested_docs = []
     for f in files:
         file_bytes = f.read()
-        orig_name = f.filename or "uploaded_document.txt"
+        if len(file_bytes) > MAX_UPLOAD_MB * 1024 * 1024:
+            return jsonify({"error": f"Single file exceeds maximum allowed size of {MAX_UPLOAD_MB} MB."}), 413
+        if current_bytes + len(file_bytes) > MAX_USER_STORAGE_BYTES:
+            return jsonify({"error": f"Storage quota exceeded (max {MAX_USER_STORAGE_BYTES // (1024 * 1024)} MB per account)."}), 413
+        current_bytes += len(file_bytes)
+
+        orig_name = os.path.basename(f.filename or "uploaded_document.txt") or "uploaded_document.txt"
         mime_type = f.mimetype or ""
         stored_path = sql_db.save_uploaded_raw_file(orig_name, file_bytes, user_id=user_id)
 
@@ -455,7 +614,7 @@ def ingest_upload():
         "success": True,
         "ingestedDocuments": ingested_docs,
         "stats": vector_db.get_vectordb_stats(user_id),
-        "databaseTelemetry": sql_db.get_database_telemetry(user_id),
+        "databaseTelemetry": sql_db.get_database_telemetry(user_id, is_admin=_is_current_admin()),
     })
 
 
@@ -468,17 +627,22 @@ def ingest_text():
     content = str(body.get("content") or "").strip()
     if not content:
         return jsonify({"error": "Document content is required."}), 400
+    if vector_db.get_document_count(user_id) >= MAX_USER_DOCS:
+        return jsonify({"error": f"Document quota exceeded (max {MAX_USER_DOCS} documents per account)."}), 400
+    content_bytes = content.encode("utf-8")
+    if sql_db.get_user_uploads_bytes(user_id) + len(content_bytes) > MAX_USER_STORAGE_BYTES:
+        return jsonify({"error": f"Storage quota exceeded (max {MAX_USER_STORAGE_BYTES // (1024 * 1024)} MB per account)."}), 413
 
-    title = str(body.get("title") or "").strip() or f"Technical Specification {vector_db.get_document_count(user_id) + 1}"
+    title = str(body.get("title") or "").strip()[:140] or f"Technical Specification {vector_db.get_document_count(user_id) + 1}"
     doc_format = str(body.get("format") or "MARKDOWN")
     auto_opt = bool(body.get("autoOptimize", cfg.get("autoOptimizeChunking", True)))
     strategy = str(body.get("strategy") or cfg.get("defaultChunkStrategy", "semantic"))
-    target_tokens = int(body.get("targetChunkTokens") or cfg.get("targetChunkTokens", 150))
-    overlap_tokens = int(body.get("chunkOverlapTokens") or cfg.get("chunkOverlapTokens", 30))
+    target_tokens = max(40, min(1000, int(body.get("targetChunkTokens") or cfg.get("targetChunkTokens", 150))))
+    overlap_tokens = max(0, min(300, int(body.get("chunkOverlapTokens") or cfg.get("chunkOverlapTokens", 30))))
 
     cleaned_text, telemetry = optimize_and_clean_text(content, False, 100.0)
-    filename_slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_") + ".md"
-    stored_path = sql_db.save_uploaded_raw_file(filename_slug, content.encode("utf-8"), user_id=user_id)
+    filename_slug = (re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_") or "document") + ".md"
+    stored_path = sql_db.save_uploaded_raw_file(filename_slug, content_bytes, user_id=user_id)
 
     doc = vector_db.ingest_document(
         title=title,
@@ -501,7 +665,7 @@ def ingest_text():
         "success": True,
         "document": doc,
         "stats": vector_db.get_vectordb_stats(user_id),
-        "databaseTelemetry": sql_db.get_database_telemetry(user_id),
+        "databaseTelemetry": sql_db.get_database_telemetry(user_id, is_admin=_is_current_admin()),
     })
 
 
@@ -512,8 +676,8 @@ def rechunk_doc(doc_id: str):
     cfg = get_user_config(user_id)
     body = request.get_json(force=True, silent=True) or {}
     strategy = str(body.get("strategy") or "semantic")
-    target_tokens = int(body.get("targetChunkTokens") or cfg.get("targetChunkTokens", 150))
-    overlap_tokens = int(body.get("chunkOverlapTokens") or cfg.get("chunkOverlapTokens", 30))
+    target_tokens = max(40, min(1000, int(body.get("targetChunkTokens") or cfg.get("targetChunkTokens", 150))))
+    overlap_tokens = max(0, min(300, int(body.get("chunkOverlapTokens") or cfg.get("chunkOverlapTokens", 30))))
 
     updated = vector_db.rechunk_document(
         doc_id, strategy, user_id=user_id, target_chunk_tokens=target_tokens, chunk_overlap_tokens=overlap_tokens
@@ -525,7 +689,7 @@ def rechunk_doc(doc_id: str):
         "success": True,
         "document": updated,
         "stats": vector_db.get_vectordb_stats(user_id),
-        "databaseTelemetry": sql_db.get_database_telemetry(user_id),
+        "databaseTelemetry": sql_db.get_database_telemetry(user_id, is_admin=_is_current_admin()),
     })
 
 
@@ -537,7 +701,7 @@ def delete_doc(doc_id: str):
     return jsonify({
         "success": deleted,
         "stats": vector_db.get_vectordb_stats(user_id),
-        "databaseTelemetry": sql_db.get_database_telemetry(user_id),
+        "databaseTelemetry": sql_db.get_database_telemetry(user_id, is_admin=_is_current_admin()),
     })
 
 
@@ -552,7 +716,7 @@ def reset_corpus():
         "success": True,
         "documents": vector_db.get_all_documents(user_id),
         "stats": vector_db.get_vectordb_stats(user_id),
-        "databaseTelemetry": sql_db.get_database_telemetry(user_id),
+        "databaseTelemetry": sql_db.get_database_telemetry(user_id, is_admin=_is_current_admin()),
     })
 
 
@@ -618,6 +782,8 @@ def query_rag():
     prompt = str(body.get("prompt") or "").strip()
     if not prompt:
         return jsonify({"error": "Prompt is required."}), 400
+    if len(prompt) > MAX_PROMPT_CHARS:
+        return jsonify({"error": f"Prompt exceeds maximum length of {MAX_PROMPT_CHARS} characters."}), 400
 
     chat_id = body.get("chatId")
     if isinstance(chat_id, str):
@@ -625,18 +791,29 @@ def query_rag():
     else:
         chat_id = None
 
-    overrides = body.get("configOverrides") or {}
+    overrides = body.get("configOverrides") if isinstance(body.get("configOverrides"), dict) else {}
+    merged_keys = dict(cfg.get("apiKeys", {}))
+    if isinstance(overrides.get("apiKeys"), dict):
+        for k in ("openai", "gemini", "anthropic", "groq", "openrouter"):
+            v = overrides["apiKeys"].get(k)
+            if isinstance(v, str) and v.strip() and not v.startswith("••••"):
+                merged_keys[k] = v.strip()
+
+    merged_eps = dict(cfg.get("localEndpoints", {}))
+    if isinstance(overrides.get("localEndpoints"), dict):
+        for ep_key in ("ollamaUrl", "lmStudioUrl"):
+            raw_ep = overrides["localEndpoints"].get(ep_key)
+            if isinstance(raw_ep, str) and raw_ep.strip():
+                validated_ep = validate_local_endpoint_url(raw_ep)
+                if not validated_ep:
+                    return jsonify({"error": f"Invalid or disallowed local endpoint URL for {ep_key}."}), 400
+                merged_eps[ep_key] = validated_ep
+
     merged_config = {
         **cfg,
         **overrides,
-        "apiKeys": {
-            **cfg.get("apiKeys", {}),
-            **(overrides.get("apiKeys") or {}),
-        },
-        "localEndpoints": {
-            **cfg.get("localEndpoints", {}),
-            **(overrides.get("localEndpoints") or {}),
-        },
+        "apiKeys": merged_keys,
+        "localEndpoints": merged_eps,
     }
 
     resp_obj = execute_rag_pipeline(prompt, merged_config, user_id=user_id, chat_id=chat_id)
@@ -662,7 +839,7 @@ def get_findings():
     user_id = g.current_user["userId"]
     return jsonify({
         "findings": sql_db.list_saved_findings(user_id),
-        "databaseTelemetry": sql_db.get_database_telemetry(user_id),
+        "databaseTelemetry": sql_db.get_database_telemetry(user_id, is_admin=_is_current_admin()),
     })
 
 
@@ -671,12 +848,17 @@ def get_findings():
 def create_finding():
     user_id = g.current_user["userId"]
     body = request.get_json(force=True, silent=True) or {}
-    saved = sql_db.save_finding(body, user_id=user_id)
+    try:
+        saved = sql_db.save_finding(body, user_id=user_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 403
     return jsonify({
         "success": True,
         "finding": saved,
         "findings": sql_db.list_saved_findings(user_id),
-        "databaseTelemetry": sql_db.get_database_telemetry(user_id),
+        "databaseTelemetry": sql_db.get_database_telemetry(user_id, is_admin=_is_current_admin()),
     })
 
 
@@ -688,14 +870,14 @@ def remove_finding(finding_id: str):
     return jsonify({
         "success": deleted,
         "findings": sql_db.list_saved_findings(user_id),
-        "databaseTelemetry": sql_db.get_database_telemetry(user_id),
+        "databaseTelemetry": sql_db.get_database_telemetry(user_id, is_admin=_is_current_admin()),
     })
 
 
 @app.route("/api/database/telemetry", methods=["GET"])
 @require_auth
 def get_db_telemetry():
-    return jsonify(sql_db.get_database_telemetry(g.current_user["userId"]))
+    return jsonify(sql_db.get_database_telemetry(g.current_user["userId"], is_admin=_is_current_admin()))
 
 
 @app.route("/api/config", methods=["POST"])
@@ -712,10 +894,21 @@ def update_config():
             if isinstance(val, str) and not val.startswith("••••"):
                 updated_keys[k] = val.strip()
 
-    updated_eps = {
-        **cfg.get("localEndpoints", {}),
-        **(incoming.get("localEndpoints") or {}),
-    }
+    updated_eps = dict(cfg.get("localEndpoints", {}))
+    if isinstance(incoming.get("localEndpoints"), dict):
+        for ep_key, default_ep in (("ollamaUrl", "http://localhost:11434"), ("lmStudioUrl", "http://localhost:1234/v1")):
+            raw_ep = incoming["localEndpoints"].get(ep_key)
+            if isinstance(raw_ep, str) and raw_ep.strip():
+                norm_ep = raw_ep.strip().rstrip("/")
+                if norm_ep != default_ep and norm_ep != (updated_eps.get(ep_key) or "").rstrip("/"):
+                    validated_ep = validate_local_endpoint_url(norm_ep)
+                    if not validated_ep:
+                        return jsonify({
+                            "error": f"Disallowed endpoint URL for {ep_key}. Only loopback http(s)://localhost or 127.0.0.1 endpoints are permitted in local mode."
+                        }), 400
+                    updated_eps[ep_key] = validated_ep
+                else:
+                    updated_eps[ep_key] = norm_ep
 
     updated_cfg = {
         **cfg,
@@ -727,7 +920,7 @@ def update_config():
 
     return jsonify({
         "success": True,
-        "config": updated_cfg,
+        "config": mask_config_for_client(updated_cfg),
     })
 
 
@@ -752,24 +945,26 @@ def probe_daemons():
         "lmStudioModels": [],
     }
     eps = cfg.get("localEndpoints", {})
-    ollama_url = (eps.get("ollamaUrl") or "http://localhost:11434").rstrip("/")
-    lm_url = (eps.get("lmStudioUrl") or "http://localhost:1234/v1").rstrip("/")
+    ollama_url = validate_local_endpoint_url(eps.get("ollamaUrl") or "http://localhost:11434")
+    lm_url = validate_local_endpoint_url(eps.get("lmStudioUrl") or "http://localhost:1234/v1")
 
-    try:
-        with urllib.request.urlopen(f"{ollama_url}/api/tags", timeout=1.5) as r1:
-            data = json.loads(r1.read().decode("utf-8"))
-            status["ollamaOnline"] = True
-            status["ollamaModels"] = [m.get("name") for m in data.get("models", []) if m.get("name")]
-    except Exception:
-        status["ollamaOnline"] = False
+    if ollama_url:
+        try:
+            with urllib.request.urlopen(f"{ollama_url}/api/tags", timeout=1.5) as r1:
+                data = json.loads(r1.read().decode("utf-8"))
+                status["ollamaOnline"] = True
+                status["ollamaModels"] = [m.get("name") for m in data.get("models", []) if m.get("name")]
+        except Exception:
+            status["ollamaOnline"] = False
 
-    try:
-        with urllib.request.urlopen(f"{lm_url}/models", timeout=1.5) as r2:
-            data = json.loads(r2.read().decode("utf-8"))
-            status["lmStudioOnline"] = True
-            status["lmStudioModels"] = [m.get("id") for m in data.get("data", []) if m.get("id")]
-    except Exception:
-        status["lmStudioOnline"] = False
+    if lm_url:
+        try:
+            with urllib.request.urlopen(f"{lm_url}/models", timeout=1.5) as r2:
+                data = json.loads(r2.read().decode("utf-8"))
+                status["lmStudioOnline"] = True
+                status["lmStudioModels"] = [m.get("id") for m in data.get("data", []) if m.get("id")]
+        except Exception:
+            status["lmStudioOnline"] = False
 
     return jsonify(status)
 

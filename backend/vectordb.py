@@ -3,6 +3,8 @@ import math
 import os
 import random
 import re
+import secrets
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Tuple, Optional
@@ -133,41 +135,49 @@ class HybridVectorDatabase:
     def __init__(self, storage_dir: str):
         os.makedirs(storage_dir, exist_ok=True)
         self.storage_file = os.path.join(storage_dir, "hybrid_vectordb.json")
+        self._lock = threading.RLock()
         self.sql_db = PersistentRAGDatabase(storage_dir)
         self.documents: Dict[str, Dict[str, Any]] = {}
         self.chunks: Dict[str, Dict[str, Any]] = {}
         self._load_from_disk()
 
     def _load_from_disk(self):
-        try:
-            sql_docs, sql_chunks = self.sql_db.load_all_documents_and_chunks()
-            for doc in sql_docs:
-                self.documents[doc["id"]] = doc
-            for ch in sql_chunks:
-                self.chunks[ch["id"]] = ch
-        except Exception:
-            pass
+        with self._lock:
+            try:
+                sql_docs, sql_chunks = self.sql_db.load_all_documents_and_chunks()
+                for doc in sql_docs:
+                    self.documents[doc["id"]] = doc
+                for ch in sql_chunks:
+                    self.chunks[ch["id"]] = ch
+            except Exception:
+                pass
 
     def save_to_disk(self):
-        try:
-            payload = {
-                "documents": list(self.documents.values()),
-                "chunks": list(self.chunks.values()),
-            }
-            with open(self.storage_file, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
-        except Exception as e:
-            print("Failed to persist VectorDB snapshot:", e)
+        with self._lock:
+            try:
+                payload = {
+                    "documents": list(self.documents.values()),
+                    "chunks": list(self.chunks.values()),
+                }
+                tmp_path = f"{self.storage_file}.{os.getpid()}.{threading.get_ident()}.tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                os.replace(tmp_path, self.storage_file)
+            except Exception as e:
+                print("Failed to persist VectorDB snapshot:", e)
 
     def get_document_count(self, user_id: str) -> int:
-        return sum(1 for d in self.documents.values() if d.get("userId", "usr_demo_admin") == user_id)
+        with self._lock:
+            return sum(1 for d in self.documents.values() if d.get("userId", "usr_demo_admin") == user_id)
 
     def get_all_documents(self, user_id: str) -> List[Dict[str, Any]]:
-        user_docs = [d for d in self.documents.values() if d.get("userId", "usr_demo_admin") == user_id]
+        with self._lock:
+            user_docs = [dict(d) for d in self.documents.values() if d.get("userId", "usr_demo_admin") == user_id]
         return sorted(user_docs, key=lambda d: d.get("ingestedAt", ""), reverse=True)
 
     def get_all_chunks(self, user_id: str) -> List[Dict[str, Any]]:
-        return [c for c in self.chunks.values() if c.get("userId", "usr_demo_admin") == user_id]
+        with self._lock:
+            return [dict(c) for c in self.chunks.values() if c.get("userId", "usr_demo_admin") == user_id]
 
     def _compute_user_idf_and_hnsw(self, user_chunks: List[Dict[str, Any]]) -> Tuple[Dict[str, float], float, int]:
         n_chunks = len(user_chunks)
@@ -206,14 +216,7 @@ class HybridVectorDatabase:
         chunk_overlap_tokens: int = 30,
         doc_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        final_doc_id = doc_id or f"doc_{int(time.time() * 1000)}_{random.randint(1000, 9999)}"
-
-        to_delete = [
-            cid for cid, ch in self.chunks.items()
-            if ch["documentId"] == final_doc_id and ch.get("userId", "usr_demo_admin") == user_id
-        ]
-        for cid in to_delete:
-            del self.chunks[cid]
+        final_doc_id = doc_id or f"doc_{int(time.time() * 1000)}_{secrets.token_hex(4)}"
 
         benchmarks, optimal_strategy = benchmark_all_chunk_strategies(
             cleaned_text, title, target_chunk_tokens, chunk_overlap_tokens
@@ -255,7 +258,6 @@ class HybridVectorDatabase:
                 "coords2D": coords_2d,
                 "sparseTerms": sparse_terms,
             }
-            self.chunks[chunk_id] = chunk_obj
             doc_chunks.append(chunk_obj)
 
         doc_record = {
@@ -274,9 +276,23 @@ class HybridVectorDatabase:
             "chunkCount": len(raw_chunks),
         }
 
-        self.documents[final_doc_id] = doc_record
-        self.sql_db.upsert_document_and_chunks(doc_record, doc_chunks, user_id=user_id)
-        self.save_to_disk()
+        with self._lock:
+            existing_doc = self.documents.get(final_doc_id)
+            if existing_doc and existing_doc.get("userId", "usr_demo_admin") != user_id:
+                raise PermissionError("Cannot overwrite a document owned by another user.")
+
+            self.sql_db.upsert_document_and_chunks(doc_record, doc_chunks, user_id=user_id)
+
+            to_delete = [
+                cid for cid, ch in self.chunks.items()
+                if ch["documentId"] == final_doc_id and ch.get("userId", "usr_demo_admin") == user_id
+            ]
+            for cid in to_delete:
+                del self.chunks[cid]
+            for ch in doc_chunks:
+                self.chunks[ch["id"]] = ch
+            self.documents[final_doc_id] = doc_record
+            self.save_to_disk()
         return doc_record
 
     def rechunk_document(
@@ -287,45 +303,49 @@ class HybridVectorDatabase:
         target_chunk_tokens: int = 150,
         chunk_overlap_tokens: int = 30,
     ) -> Optional[Dict[str, Any]]:
-        existing = self.documents.get(doc_id)
-        if not existing or existing.get("userId", "usr_demo_admin") != user_id:
-            return None
+        with self._lock:
+            existing = self.documents.get(doc_id)
+            if not existing or existing.get("userId", "usr_demo_admin") != user_id:
+                return None
+            existing_copy = dict(existing)
         return self.ingest_document(
-            title=existing["title"],
-            filename=existing["filename"],
-            doc_format=existing["format"],
-            raw_text=existing["rawText"],
-            cleaned_text=existing["cleanedText"],
-            extraction_telemetry=existing["extractionTelemetry"],
+            title=existing_copy["title"],
+            filename=existing_copy["filename"],
+            doc_format=existing_copy["format"],
+            raw_text=existing_copy["rawText"],
+            cleaned_text=existing_copy["cleanedText"],
+            extraction_telemetry=existing_copy["extractionTelemetry"],
             user_id=user_id,
             auto_optimize=False,
             preferred_strategy=new_strategy,
             target_chunk_tokens=target_chunk_tokens,
             chunk_overlap_tokens=chunk_overlap_tokens,
-            doc_id=existing["id"],
+            doc_id=existing_copy["id"],
         )
 
     def delete_document(self, doc_id: str, user_id: str = "usr_demo_admin") -> bool:
-        existing = self.documents.get(doc_id)
-        if not existing or existing.get("userId", "usr_demo_admin") != user_id:
-            return False
-        del self.documents[doc_id]
-        to_del = [
-            cid for cid, ch in self.chunks.items()
-            if ch["documentId"] == doc_id and ch.get("userId", "usr_demo_admin") == user_id
-        ]
-        for cid in to_del:
-            del self.chunks[cid]
-        self.sql_db.delete_document(doc_id, user_id=user_id)
-        self.save_to_disk()
-        return True
+        with self._lock:
+            existing = self.documents.get(doc_id)
+            if not existing or existing.get("userId", "usr_demo_admin") != user_id:
+                return False
+            del self.documents[doc_id]
+            to_del = [
+                cid for cid, ch in self.chunks.items()
+                if ch["documentId"] == doc_id and ch.get("userId", "usr_demo_admin") == user_id
+            ]
+            for cid in to_del:
+                del self.chunks[cid]
+            self.sql_db.delete_document(doc_id, user_id=user_id)
+            self.save_to_disk()
+            return True
 
     def purge_user_data_in_memory(self, user_id: str):
-        for did in [k for k, v in self.documents.items() if v.get("userId") == user_id]:
-            del self.documents[did]
-        for cid in [k for k, v in self.chunks.items() if v.get("userId") == user_id]:
-            del self.chunks[cid]
-        self.save_to_disk()
+        with self._lock:
+            for did in [k for k, v in self.documents.items() if v.get("userId") == user_id]:
+                del self.documents[did]
+            for cid in [k for k, v in self.chunks.items() if v.get("userId") == user_id]:
+                del self.chunks[cid]
+            self.save_to_disk()
 
     def get_vectordb_stats(self, user_id: str = "usr_demo_admin") -> Dict[str, Any]:
         user_docs = self.get_all_documents(user_id)

@@ -1,13 +1,22 @@
+import base64
 import hashlib
 import hmac
 import json
 import os
 import random
+import re
 import secrets
+import shutil
 import sqlite3
+import struct
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
+
+USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,31}$")
+EMAIL_RE = re.compile(r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$")
+SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{4,80}$")
+ENC_PREFIX = "enc:v1:"
 
 try:
     import psycopg
@@ -101,8 +110,93 @@ class PersistentRAGDatabase:
             print("WARNING: DATABASE_URL is set but psycopg is not installed; falling back to SQLite3.")
 
         self.db_path = os.path.join(self.data_dir, "clayrag_vault.sqlite3")
+        self._vault_master_key = self._load_or_create_vault_key()
         self._init_schema()
         self._ensure_demo_user()
+        self._migrate_legacy_active_config()
+
+    def _load_or_create_vault_key(self) -> bytes:
+        env_key = (os.environ.get("CLAYRAG_ENCRYPTION_KEY") or "").strip()
+        if env_key:
+            return hashlib.sha256(env_key.encode("utf-8")).digest()
+        key_path = os.path.join(self.data_dir, ".vault_key")
+        if os.path.exists(key_path):
+            try:
+                with open(key_path, "rb") as f:
+                    raw = f.read().strip()
+                if len(raw) >= 32:
+                    return hashlib.sha256(raw).digest()
+            except Exception:
+                pass
+        fresh = secrets.token_bytes(32)
+        try:
+            with open(key_path, "wb") as f:
+                f.write(fresh)
+            if os.name != "nt":
+                os.chmod(key_path, 0o600)
+        except Exception:
+            pass
+        return hashlib.sha256(fresh).digest()
+
+    def _derive_aead_subkeys(self) -> Tuple[bytes, bytes]:
+        enc_key = hmac.new(self._vault_master_key, b"clayrag-enc-v1", hashlib.sha256).digest()
+        mac_key = hmac.new(self._vault_master_key, b"clayrag-mac-v1", hashlib.sha256).digest()
+        return enc_key, mac_key
+
+    def _encrypt_secret(self, plaintext: str) -> str:
+        if not plaintext or plaintext.startswith(ENC_PREFIX):
+            return plaintext
+        enc_key, mac_key = self._derive_aead_subkeys()
+        nonce = secrets.token_bytes(16)
+        pt = plaintext.encode("utf-8")
+        ct = bytearray(len(pt))
+        block_idx = 0
+        offset = 0
+        while offset < len(pt):
+            ks = hmac.new(enc_key, nonce + struct.pack(">I", block_idx), hashlib.sha256).digest()
+            take = min(len(ks), len(pt) - offset)
+            for i in range(take):
+                ct[offset + i] = pt[offset + i] ^ ks[i]
+            offset += take
+            block_idx += 1
+        tag = hmac.new(mac_key, nonce + bytes(ct), hashlib.sha256).digest()
+        token = base64.urlsafe_b64encode(nonce + bytes(ct) + tag).decode("ascii")
+        return f"{ENC_PREFIX}{token}"
+
+    def _decrypt_secret(self, value: str) -> str:
+        if not isinstance(value, str) or not value.startswith(ENC_PREFIX):
+            return value if isinstance(value, str) else ""
+        try:
+            raw = base64.urlsafe_b64decode(value[len(ENC_PREFIX):].encode("ascii"))
+            if len(raw) < 48:
+                return ""
+            nonce = raw[:16]
+            tag = raw[-32:]
+            ct = raw[16:-32]
+            enc_key, mac_key = self._derive_aead_subkeys()
+            expected_tag = hmac.new(mac_key, nonce + ct, hashlib.sha256).digest()
+            if not hmac.compare_digest(tag, expected_tag):
+                return ""
+            pt = bytearray(len(ct))
+            block_idx = 0
+            offset = 0
+            while offset < len(ct):
+                ks = hmac.new(enc_key, nonce + struct.pack(">I", block_idx), hashlib.sha256).digest()
+                take = min(len(ks), len(ct) - offset)
+                for i in range(take):
+                    pt[offset + i] = ct[offset + i] ^ ks[i]
+                offset += take
+                block_idx += 1
+            return bytes(pt).decode("utf-8")
+        except Exception:
+            return ""
+
+    def _safe_child_path(self, base_dir: str, *parts: str) -> str:
+        base_abs = os.path.abspath(base_dir)
+        target_abs = os.path.abspath(os.path.join(base_abs, *parts))
+        if os.path.commonpath([base_abs, target_abs]) != base_abs:
+            raise ValueError("Path escapes allowed directory.")
+        return target_abs
 
     def _get_conn(self) -> _DualConnection:
         if self.is_postgres and self.database_url and psycopg is not None:
@@ -282,12 +376,15 @@ class PersistentRAGDatabase:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_findings_user ON saved_findings(user_id, created_at)")
 
     def _ensure_demo_user(self):
+        if os.environ.get("ENABLE_DEMO_USER", "").strip().lower() not in ("1", "true", "yes"):
+            return
+        demo_pw = (os.environ.get("DEMO_ADMIN_PASSWORD") or "admin123").strip() or "admin123"
         with self._get_conn() as conn:
             row = conn.execute(
                 "SELECT user_id FROM users WHERE user_id = 'usr_demo_admin' OR username = 'admin'"
             ).fetchone()
             if not row:
-                salt, pw_hash = self._hash_password("admin123")
+                salt, pw_hash = self._hash_password(demo_pw)
                 now = datetime.now(timezone.utc).isoformat()
                 conn.execute(
                     """
@@ -309,6 +406,30 @@ class PersistentRAGDatabase:
                         now,
                     ),
                 )
+
+    def _migrate_legacy_active_config(self):
+        """
+        One-time migration: if a legacy global 'active' config exists, move it strictly
+        to usr_demo_admin (only if that user exists and lacks a user-scoped config)
+        and remove the global 'active' row so new users can never inherit shared API keys.
+        """
+        with self._get_conn() as conn:
+            legacy = conn.execute(
+                "SELECT config_json, updated_at FROM pipeline_config WHERE config_key = 'active'"
+            ).fetchone()
+            if not legacy:
+                return
+            demo = conn.execute("SELECT user_id FROM users WHERE user_id = 'usr_demo_admin'").fetchone()
+            if demo:
+                existing_demo_cfg = conn.execute(
+                    "SELECT config_key FROM pipeline_config WHERE config_key = 'user_usr_demo_admin'"
+                ).fetchone()
+                if not existing_demo_cfg:
+                    conn.execute(
+                        "INSERT INTO pipeline_config (config_key, config_json, updated_at) VALUES (?, ?, ?)",
+                        ("user_usr_demo_admin", legacy["config_json"], legacy["updated_at"]),
+                    )
+            conn.execute("DELETE FROM pipeline_config WHERE config_key = 'active'")
 
     def _serialize_user(self, row: Any) -> Dict[str, Any]:
         return {
@@ -334,14 +455,17 @@ class PersistentRAGDatabase:
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         clean_user = username.strip().lower()
         clean_email = email.strip().lower()
-        clean_name = display_name.strip() or clean_user
+        clean_name = display_name.strip()[:80] or clean_user
 
-        if len(clean_user) < 3:
-            return None, "Username must be at least 3 characters."
-        if "@" not in clean_email or "." not in clean_email:
+        if not USERNAME_RE.match(clean_user):
+            return (
+                None,
+                "Username must be 3-32 characters using only lowercase letters, numbers, '.', '_', or '-' (no spaces or '@').",
+            )
+        if len(clean_email) > 254 or not EMAIL_RE.match(clean_email):
             return None, "Please enter a valid email address."
-        if len(password) < 6:
-            return None, "Password must be at least 6 characters."
+        if len(password) < 8:
+            return None, "Password must be at least 8 characters."
 
         user_id = f"usr_{int(time.time() * 1000)}_{secrets.token_hex(3)}"
         salt, pw_hash = self._hash_password(password)
@@ -394,7 +518,11 @@ class PersistentRAGDatabase:
     def create_session(self, user_id: str) -> str:
         token = secrets.token_hex(32)
         now = datetime.now(timezone.utc)
-        expires = now + timedelta(days=30)
+        try:
+            ttl_days = max(1, min(30, int(os.environ.get("SESSION_TTL_DAYS", "7"))))
+        except ValueError:
+            ttl_days = 7
+        expires = now + timedelta(days=ttl_days)
         with self._get_conn() as conn:
             conn.execute(
                 "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
@@ -445,14 +573,17 @@ class PersistentRAGDatabase:
                 if not row:
                     return None, "User not found."
 
-                new_name = display_name.strip() if display_name and display_name.strip() else row["display_name"]
+                new_name = (display_name.strip()[:80]) if display_name and display_name.strip() else row["display_name"]
                 new_email = email.strip().lower() if email and email.strip() else row["email"]
                 new_username = username.strip().lower() if username and username.strip() else row["username"]
 
-                if len(new_username) < 3:
-                    return None, "Username must be at least 3 characters."
-                if "@" not in new_email:
-                    return None, "Invalid email address."
+                if new_username != row["username"] and not USERNAME_RE.match(new_username):
+                    return (
+                        None,
+                        "Username must be 3-32 characters using only lowercase letters, numbers, '.', '_', or '-' (no spaces or '@').",
+                    )
+                if len(new_email) > 254 or not EMAIL_RE.match(new_email):
+                    return None, "Please enter a valid email address."
 
                 conn.execute(
                     "UPDATE users SET display_name = ?, email = ?, username = ? WHERE user_id = ?",
@@ -470,9 +601,10 @@ class PersistentRAGDatabase:
         user_id: str,
         current_password: str,
         new_password: str,
+        keep_token: Optional[str] = None,
     ) -> Tuple[bool, str]:
-        if len(new_password) < 6:
-            return False, "New password must be at least 6 characters."
+        if len(new_password) < 8:
+            return False, "New password must be at least 8 characters."
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
             if not row:
@@ -484,18 +616,36 @@ class PersistentRAGDatabase:
                 "UPDATE users SET password_salt = ?, password_hash = ? WHERE user_id = ?",
                 (new_salt, new_hash, user_id),
             )
-            return True, "Password updated successfully."
+            if keep_token:
+                conn.execute(
+                    "DELETE FROM sessions WHERE user_id = ? AND token != ?",
+                    (user_id, keep_token.strip()),
+                )
+            else:
+                conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            return True, "Password updated successfully. Other active sessions have been signed out."
 
     def delete_user_account(self, user_id: str) -> bool:
         with self._get_conn() as conn:
             conn.execute("DELETE FROM vector_chunks WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM documents WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM query_runs WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM chat_sessions WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM saved_findings WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM pipeline_config WHERE config_key = ?", (f"user_{user_id}",))
             conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
             cur = conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
-            return cur.rowcount > 0
+            deleted = cur.rowcount > 0
+
+        if deleted:
+            for base_dir in (self.uploads_dir, self.exports_dir):
+                try:
+                    user_dir = self._safe_child_path(base_dir, user_id)
+                    if os.path.isdir(user_dir):
+                        shutil.rmtree(user_dir, ignore_errors=True)
+                except ValueError:
+                    pass
+        return deleted
 
     def list_users_summary(self) -> List[Dict[str, Any]]:
         with self._get_conn() as conn:
@@ -509,13 +659,34 @@ class PersistentRAGDatabase:
     # =========================================================================
 
     def save_uploaded_raw_file(self, filename: str, file_bytes: bytes, user_id: str = "usr_demo_admin") -> str:
-        user_dir = os.path.join(self.uploads_dir, user_id)
+        user_dir = self._safe_child_path(self.uploads_dir, user_id)
         os.makedirs(user_dir, exist_ok=True)
-        safe_name = f"{int(time.time())}_{os.path.basename(filename)}"
-        target_path = os.path.join(user_dir, safe_name)
+        raw_base = os.path.basename(filename or "document.txt")
+        stem, ext = os.path.splitext(raw_base)
+        clean_stem = re.sub(r"[^a-zA-Z0-9._-]+", "_", stem).strip("._-")[:80] or "document"
+        clean_ext = re.sub(r"[^a-zA-Z0-9.]+", "", ext)[:12]
+        safe_name = f"{int(time.time())}_{secrets.token_hex(3)}_{clean_stem}{clean_ext}"
+        target_path = self._safe_child_path(user_dir, safe_name)
         with open(target_path, "wb") as f:
             f.write(file_bytes)
         return target_path
+
+    def get_user_uploads_bytes(self, user_id: str) -> int:
+        try:
+            user_dir = self._safe_child_path(self.uploads_dir, user_id)
+        except ValueError:
+            return 0
+        if not os.path.isdir(user_dir):
+            return 0
+        total = 0
+        for fn in os.listdir(user_dir):
+            fp = os.path.join(user_dir, fn)
+            if os.path.isfile(fp):
+                try:
+                    total += os.path.getsize(fp)
+                except OSError:
+                    pass
+        return total
 
     def upsert_document_and_chunks(
         self,
@@ -525,6 +696,13 @@ class PersistentRAGDatabase:
         stored_file_path: Optional[str] = None,
     ):
         with self._get_conn() as conn:
+            existing_owner = conn.execute(
+                "SELECT user_id FROM documents WHERE id = ?",
+                (doc_record["id"],),
+            ).fetchone()
+            if existing_owner and existing_owner["user_id"] != user_id:
+                raise PermissionError("Cannot overwrite a document owned by another user.")
+
             conn.execute(
                 """
                 INSERT INTO documents (
@@ -533,7 +711,6 @@ class PersistentRAGDatabase:
                     extraction_telemetry_json, strategy_benchmarks_json, chunk_count
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
-                    user_id=excluded.user_id,
                     title=excluded.title,
                     filename=excluded.filename,
                     stored_file_path=COALESCE(excluded.stored_file_path, documents.stored_file_path),
@@ -856,7 +1033,6 @@ class PersistentRAGDatabase:
                     full_response_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(query_id) DO UPDATE SET
-                    user_id=excluded.user_id,
                     chat_id=excluded.chat_id,
                     timestamp=excluded.timestamp,
                     original_prompt=excluded.original_prompt,
@@ -910,6 +1086,16 @@ class PersistentRAGDatabase:
                 obj = json.loads(r["full_response_json"])
                 if r["chat_id"] and not obj.get("chatId"):
                     obj["chatId"] = r["chat_id"]
+                active_cfg = obj.get("activeConfig")
+                if isinstance(active_cfg, dict) and isinstance(active_cfg.get("apiKeys"), dict):
+                    active_cfg["apiKeys"] = {
+                        k: (
+                            v
+                            if (isinstance(v, str) and v.startswith("••••"))
+                            else (("••••••••" + v[-4:]) if isinstance(v, str) and len(v) >= 4 else "")
+                        )
+                        for k, v in active_cfg["apiKeys"].items()
+                    }
                 out.append(obj)
             return out
 
@@ -922,13 +1108,20 @@ class PersistentRAGDatabase:
                 conn.execute("DELETE FROM chat_sessions WHERE user_id = ?", (user_id,))
 
     def save_finding(self, payload: Dict[str, Any], user_id: str = "usr_demo_admin") -> Dict[str, Any]:
-        finding_id = payload.get("findingId") or f"fnd_{int(time.time() * 1000)}_{random.randint(100, 999)}"
+        raw_fid = str(payload.get("findingId") or "").strip()
+        if raw_fid:
+            if not SAFE_ID_RE.match(raw_fid):
+                raise ValueError("Invalid findingId format.")
+            finding_id = raw_fid
+        else:
+            finding_id = f"fnd_{int(time.time() * 1000)}_{secrets.token_hex(4)}"
+
         created_at = datetime.now(timezone.utc).isoformat()
-        title = payload.get("title") or payload.get("prompt", "Research Finding")[:80]
-        prompt = payload.get("prompt") or ""
-        reshaped_query = payload.get("reshapedQuery") or prompt
-        synthesized_answer = payload.get("synthesizedAnswer") or ""
-        analyst_notes = payload.get("analystNotes") or ""
+        title = str(payload.get("title") or payload.get("prompt", "Research Finding"))[:120]
+        prompt = str(payload.get("prompt") or "")[:4000]
+        reshaped_query = str(payload.get("reshapedQuery") or prompt)[:4000]
+        synthesized_answer = str(payload.get("synthesizedAnswer") or "")
+        analyst_notes = str(payload.get("analystNotes") or "")[:4000]
         tags = payload.get("tags") or ["VERIFIED_RAG", "HNSW_HYBRID"]
         citations = payload.get("citations") or []
         claims = payload.get("claimVerifications") or []
@@ -936,6 +1129,13 @@ class PersistentRAGDatabase:
         query_id = payload.get("queryId")
 
         with self._get_conn() as conn:
+            existing = conn.execute(
+                "SELECT user_id FROM saved_findings WHERE finding_id = ?",
+                (finding_id,),
+            ).fetchone()
+            if existing and existing["user_id"] != user_id:
+                raise PermissionError("Cannot modify a finding owned by another user.")
+
             conn.execute(
                 """
                 INSERT INTO saved_findings (
@@ -944,7 +1144,6 @@ class PersistentRAGDatabase:
                     claim_verifications_json, metrics_json, pinned
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT(finding_id) DO UPDATE SET
-                    user_id=excluded.user_id,
                     query_id=excluded.query_id,
                     title=excluded.title,
                     created_at=excluded.created_at,
@@ -975,9 +1174,9 @@ class PersistentRAGDatabase:
                 ),
             )
 
-        user_export_dir = os.path.join(self.exports_dir, user_id)
+        user_export_dir = self._safe_child_path(self.exports_dir, user_id)
         os.makedirs(user_export_dir, exist_ok=True)
-        md_path = os.path.join(user_export_dir, f"{finding_id}.md")
+        md_path = self._safe_child_path(user_export_dir, f"{finding_id}.md")
         try:
             with open(md_path, "w", encoding="utf-8") as f:
                 f.write(f"# {title}\n\n")
@@ -1006,7 +1205,7 @@ class PersistentRAGDatabase:
             "citations": citations,
             "claimVerifications": claims,
             "metrics": metrics,
-            "exportedMarkdownPath": md_path,
+            "exportedMarkdownPath": f"vault://exports/{finding_id}.md",
         }
 
     def list_saved_findings(self, user_id: str = "usr_demo_admin") -> List[Dict[str, Any]]:
@@ -1031,25 +1230,41 @@ class PersistentRAGDatabase:
                     "citations": json.loads(r["citations_json"]),
                     "claimVerifications": json.loads(r["claim_verifications_json"]),
                     "metrics": json.loads(r["metrics_json"]),
-                    "exportedMarkdownPath": os.path.join(self.exports_dir, user_id, f"{fid}.md"),
+                    "exportedMarkdownPath": f"vault://exports/{fid}.md",
                 })
         return results
 
     def delete_finding(self, finding_id: str, user_id: str = "usr_demo_admin") -> bool:
+        if not SAFE_ID_RE.match(finding_id or ""):
+            return False
         with self._get_conn() as conn:
             cur = conn.execute(
                 "DELETE FROM saved_findings WHERE finding_id = ? AND user_id = ?",
                 (finding_id, user_id),
             )
-            md_path = os.path.join(self.exports_dir, user_id, f"{finding_id}.md")
-            if os.path.exists(md_path):
-                try:
+            deleted = cur.rowcount > 0
+        if deleted:
+            try:
+                user_export_dir = self._safe_child_path(self.exports_dir, user_id)
+                md_path = self._safe_child_path(user_export_dir, f"{finding_id}.md")
+                if os.path.isfile(md_path):
                     os.remove(md_path)
-                except Exception:
-                    pass
-            return cur.rowcount > 0
+            except Exception:
+                pass
+        return deleted
 
     def save_pipeline_config(self, cfg: Dict[str, Any], user_id: str = "usr_demo_admin"):
+        to_store = dict(cfg)
+        raw_keys = cfg.get("apiKeys")
+        if isinstance(raw_keys, dict):
+            enc_keys = {}
+            for k, v in raw_keys.items():
+                if isinstance(v, str) and v.strip():
+                    enc_keys[k] = self._encrypt_secret(v.strip())
+                else:
+                    enc_keys[k] = ""
+            to_store["apiKeys"] = enc_keys
+
         with self._get_conn() as conn:
             conn.execute(
                 """
@@ -1059,7 +1274,7 @@ class PersistentRAGDatabase:
                     config_json=excluded.config_json,
                     updated_at=excluded.updated_at
                 """,
-                (f"user_{user_id}", json.dumps(cfg), datetime.now(timezone.utc).isoformat()),
+                (f"user_{user_id}", json.dumps(to_store), datetime.now(timezone.utc).isoformat()),
             )
 
     def load_pipeline_config(self, user_id: str = "usr_demo_admin") -> Optional[Dict[str, Any]]:
@@ -1069,10 +1284,15 @@ class PersistentRAGDatabase:
                 (f"user_{user_id}",),
             ).fetchone()
             if not row:
-                row = conn.execute(
-                    "SELECT config_json FROM pipeline_config WHERE config_key = 'active'"
-                ).fetchone()
-            return json.loads(row["config_json"]) if row else None
+                return None
+            cfg = json.loads(row["config_json"])
+            raw_keys = cfg.get("apiKeys")
+            if isinstance(raw_keys, dict):
+                cfg["apiKeys"] = {
+                    k: self._decrypt_secret(v) if isinstance(v, str) else ""
+                    for k, v in raw_keys.items()
+                }
+            return cfg
 
     def _count_scalar(self, conn: _DualConnection, sql: str, params: Tuple[Any, ...] = ()) -> int:
         row = conn.execute(sql, params).fetchone()
@@ -1082,53 +1302,91 @@ class PersistentRAGDatabase:
             return int(next(iter(row.values())))
         return int(row[0])
 
-    def get_database_telemetry(self, user_id: str = "usr_demo_admin") -> Dict[str, Any]:
-        json_index_path = os.path.join(self.data_dir, "hybrid_vectordb.json")
-        json_size = os.path.getsize(json_index_path) if os.path.exists(json_index_path) else 0
-
-        user_uploads_dir = os.path.join(self.uploads_dir, user_id)
-        user_exports_dir = os.path.join(self.exports_dir, user_id)
-        upload_files = os.listdir(user_uploads_dir) if os.path.exists(user_uploads_dir) else []
-        export_files = os.listdir(user_exports_dir) if os.path.exists(user_exports_dir) else []
+    def get_database_telemetry(
+        self, user_id: str = "usr_demo_admin", is_admin: bool = False
+    ) -> Dict[str, Any]:
+        user_uploads_dir = self._safe_child_path(self.uploads_dir, user_id)
+        user_exports_dir = self._safe_child_path(self.exports_dir, user_id)
+        upload_files = os.listdir(user_uploads_dir) if os.path.isdir(user_uploads_dir) else []
+        export_files = os.listdir(user_exports_dir) if os.path.isdir(user_exports_dir) else []
 
         with self._get_conn() as conn:
-            user_count = self._count_scalar(conn, "SELECT COUNT(*) FROM users")
             doc_count = self._count_scalar(conn, "SELECT COUNT(*) FROM documents WHERE user_id = ?", (user_id,))
             chunk_count = self._count_scalar(conn, "SELECT COUNT(*) FROM vector_chunks WHERE user_id = ?", (user_id,))
             query_count = self._count_scalar(conn, "SELECT COUNT(*) FROM query_runs WHERE user_id = ?", (user_id,))
             finding_count = self._count_scalar(conn, "SELECT COUNT(*) FROM saved_findings WHERE user_id = ?", (user_id,))
 
-            if self.is_postgres:
-                try:
-                    db_bytes = self._count_scalar(conn, "SELECT pg_database_size(current_database())")
-                except Exception:
-                    db_bytes = 0
-                size_kb = round(db_bytes / 1024.0, 2)
-                engine_label = "PostgreSQL Cloud Vault (Permanent) + Per-User HNSW & BM25+ Store"
-                storage_location = "Cloud PostgreSQL (via DATABASE_URL)"
+            if is_admin:
+                user_count = self._count_scalar(conn, "SELECT COUNT(*) FROM users")
+                json_index_path = os.path.join(self.data_dir, "hybrid_vectordb.json")
+                json_size = os.path.getsize(json_index_path) if os.path.exists(json_index_path) else 0
+                if self.is_postgres:
+                    try:
+                        db_bytes = self._count_scalar(conn, "SELECT pg_database_size(current_database())")
+                    except Exception:
+                        db_bytes = 0
+                    size_kb = round(db_bytes / 1024.0, 2)
+                    engine_label = "PostgreSQL Cloud Vault (Permanent) + Per-User HNSW & BM25+ Store"
+                    storage_location = "Cloud PostgreSQL (via DATABASE_URL)"
+                else:
+                    db_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
+                    wal_path = self.db_path + "-wal"
+                    wal_size = os.path.getsize(wal_path) if os.path.exists(wal_path) else 0
+                    size_kb = round((db_size + wal_size) / 1024.0, 2)
+                    engine_label = "Multi-Tenant SQLite3 (WAL Mode) + Per-User HNSW & BM25+ Store"
+                    storage_location = self.db_path
+                vector_loc = json_index_path
+                uploads_loc = user_uploads_dir
+                exports_loc = user_exports_dir
+                vector_kb = round(json_size / 1024.0, 2)
             else:
-                db_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
-                wal_path = self.db_path + "-wal"
-                wal_size = os.path.getsize(wal_path) if os.path.exists(wal_path) else 0
-                size_kb = round((db_size + wal_size) / 1024.0, 2)
-                engine_label = "Multi-Tenant SQLite3 (WAL Mode) + Per-User HNSW & BM25+ Store"
-                storage_location = self.db_path
+                user_count = 1
+                doc_bytes = self._count_scalar(
+                    conn,
+                    "SELECT COALESCE(SUM(LENGTH(raw_text) + LENGTH(cleaned_text)), 0) FROM documents WHERE user_id = ?",
+                    (user_id,),
+                )
+                chunk_bytes = self._count_scalar(
+                    conn,
+                    "SELECT COALESCE(SUM(LENGTH(content) + LENGTH(embedding_json)), 0) FROM vector_chunks WHERE user_id = ?",
+                    (user_id,),
+                )
+                run_bytes = self._count_scalar(
+                    conn,
+                    "SELECT COALESCE(SUM(LENGTH(full_response_json)), 0) FROM query_runs WHERE user_id = ?",
+                    (user_id,),
+                )
+                size_kb = round((doc_bytes + chunk_bytes + run_bytes) / 1024.0, 2)
+                vector_kb = round(chunk_bytes / 1024.0, 2)
+                engine_label = (
+                    "PostgreSQL Cloud Vault (Isolated Per-User Scope)"
+                    if self.is_postgres
+                    else "SQLite3 WAL Vault (Isolated Per-User Scope)"
+                )
+                storage_location = "vault://database/per-user-scope"
+                vector_loc = "vault://vector-index/per-user-scope"
+                uploads_loc = "vault://uploads/per-user-scope"
+                exports_loc = "vault://exports/per-user-scope"
 
         return {
             "engine": engine_label,
             "sqliteFilePath": storage_location,
-            "vectorSnapshotPath": json_index_path,
-            "uploadsDirPath": user_uploads_dir,
-            "exportsDirPath": user_exports_dir,
+            "vectorSnapshotPath": vector_loc,
+            "uploadsDirPath": uploads_loc,
+            "exportsDirPath": exports_loc,
             "sqliteSizeKb": size_kb,
-            "vectorSnapshotSizeKb": round(json_size / 1024.0, 2),
+            "vectorSnapshotSizeKb": vector_kb,
             "uploadedRawFilesCount": len(upload_files),
             "exportedMarkdownReportsCount": len(export_files),
             "tables": [
                 {
                     "tableName": "users",
                     "rowCount": user_count,
-                    "purpose": "Registered user accounts with PBKDF2-HMAC-SHA256 salted password hashes & active sessions",
+                    "purpose": (
+                        "Registered user accounts with PBKDF2-HMAC-SHA256 salted password hashes & active sessions"
+                        if is_admin
+                        else "Your isolated account record with PBKDF2-HMAC-SHA256 salted password hash & active sessions"
+                    ),
                 },
                 {
                     "tableName": "documents",
@@ -1153,7 +1411,7 @@ class PersistentRAGDatabase:
                 {
                     "tableName": "pipeline_config",
                     "rowCount": 1,
-                    "purpose": "Your private API keys, LLM provider/model choices, offline GGUF path, and RRF/CRAG tuning",
+                    "purpose": "Your encrypted private API keys, LLM provider/model choices, and RRF/CRAG tuning",
                 },
             ],
         }

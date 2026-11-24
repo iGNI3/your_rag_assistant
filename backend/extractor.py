@@ -13,6 +13,9 @@ import openpyxl
 from PIL import Image
 from pypdf import PdfReader
 
+# Guard against image decompression bombs (~40 megapixels max)
+Image.MAX_IMAGE_PIXELS = 40_000_000
+
 try:
     import pytesseract
 except ImportError:

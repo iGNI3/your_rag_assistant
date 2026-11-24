@@ -41,6 +41,7 @@ import {
   authFetch,
   getStoredAuthToken,
   setStoredAuthToken,
+  USE_COOKIE_CREDENTIALS,
 } from './api';
 import { AppPageId, OverviewPage } from './pages/OverviewPage';
 import { AuthPage } from './pages/AuthPage';
@@ -314,7 +315,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const checkSession = async () => {
       const tok = getStoredAuthToken();
-      if (!tok) {
+      if (!tok && !USE_COOKIE_CREDENTIALS) {
         setAuthChecked(true);
         return;
       }

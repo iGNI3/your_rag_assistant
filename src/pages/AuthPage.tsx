@@ -9,10 +9,13 @@ import {
   User,
   Shield,
   Palette,
-  KeyRound,
 } from 'lucide-react';
 import { UserProfile } from '../types';
-import { apiUrl, setStoredAuthToken } from '../api';
+import {
+  apiUrl,
+  getAuthFetchCredentials,
+  setStoredAuthToken,
+} from '../api';
 
 interface AuthPageProps {
   themeMode: 'clay' | 'liquid-glass' | 'vision-ceramic';
@@ -49,9 +52,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     setErrorMsg(null);
     setIsSubmitting(true);
     try {
+      const credentials = getAuthFetchCredentials();
       const resp = await fetch(apiUrl('/api/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        ...(credentials ? { credentials } : {}),
         body: JSON.stringify({
           identifier: identifier.trim(),
           password: loginPassword,
@@ -82,9 +87,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     }
     setIsSubmitting(true);
     try {
+      const credentials = getAuthFetchCredentials();
       const resp = await fetch(apiUrl('/api/auth/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        ...(credentials ? { credentials } : {}),
         body: JSON.stringify({
           displayName: displayName.trim(),
           username: username.trim(),
@@ -282,7 +289,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 type="text"
                 required
                 className="clay-input"
-                placeholder="Enter username or email (e.g. admin)"
+                placeholder="Enter your username or email"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
               />
@@ -326,37 +333,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 {isSubmitting ? 'AUTHENTICATING...' : 'SIGN IN TO MY WORKSPACE'}
               </span>
             </motion.button>
-
-            {/* Quick Existing Demo Account Helper */}
-            <div
-              className="clay-card-alt"
-              style={{
-                padding: '12px 16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 10,
-                flexWrap: 'wrap',
-              }}
-            >
-              <div style={{ fontSize: '0.76rem', color: 'var(--ink-secondary)' }}>
-                <strong>Existing Demo Account:</strong>{' '}
-                <code className="font-mono">admin</code> /{' '}
-                <code className="font-mono">admin123</code>
-              </div>
-              <button
-                type="button"
-                className="clay-btn"
-                style={{ padding: '5px 11px', fontSize: '0.72rem' }}
-                onClick={() => {
-                  setIdentifier('admin');
-                  setLoginPassword('admin123');
-                }}
-              >
-                <KeyRound size={12} />
-                <span>AUTO-FILL DEMO</span>
-              </button>
-            </div>
           </form>
         ) : (
           <form
@@ -401,6 +377,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 <input
                   type="text"
                   required
+                  pattern="^[a-zA-Z0-9][a-zA-Z0-9_.-]{2,31}$"
+                  title="3-32 characters: letters, numbers, '.', '_', or '-' (no spaces or '@')"
                   className="clay-input font-mono"
                   placeholder="alex_rag"
                   value={username}
@@ -445,12 +423,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     marginBottom: 5,
                   }}
                 >
-                  PASSWORD (MIN 6 CHARS)
+                  PASSWORD (MIN 8 CHARS)
                 </label>
                 <input
                   type="password"
                   required
-                  minLength={6}
+                  minLength={8}
                   className="clay-input"
                   placeholder="••••••••"
                   value={regPassword}
@@ -473,7 +451,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 <input
                   type="password"
                   required
-                  minLength={6}
+                  minLength={8}
                   className="clay-input"
                   placeholder="••••••••"
                   value={confirmPassword}
