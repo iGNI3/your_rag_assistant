@@ -326,6 +326,7 @@ def execute_rag_pipeline(
         "answer": synthesis["answer"],
         "citations": synthesis["citations"],
         "claimVerifications": synthesis["claimVerifications"],
+        "tokenUsage": synthesis.get("tokenUsage"),
         "metrics": synthesis["metrics"],
         "activeConfig": mask_config_for_client(config_used),
     }
@@ -549,8 +550,16 @@ def get_state():
         "chatSessions": chat_sessions,
         "savedFindings": sql_db.list_saved_findings(user_id),
         "databaseTelemetry": sql_db.get_database_telemetry(user_id, is_admin=_is_current_admin()),
+        "analytics": sql_db.get_user_analytics(user_id),
         "modelPortalCatalog": OFFLINE_MODEL_PORTAL_CATALOG,
     })
+
+
+@app.route("/api/analytics", methods=["GET"])
+@require_auth
+def get_user_analytics_route():
+    user_id = g.current_user["userId"]
+    return jsonify(sql_db.get_user_analytics(user_id))
 
 
 @app.route("/api/ingest/upload", methods=["POST"])
@@ -819,6 +828,7 @@ def query_rag():
 
     resp_obj = execute_rag_pipeline(prompt, merged_config, user_id=user_id, chat_id=chat_id)
     resp_obj["chatSessions"] = sql_db.list_chat_sessions(user_id)
+    resp_obj["analytics"] = sql_db.get_user_analytics(user_id)
     return jsonify(resp_obj)
 
 
@@ -973,12 +983,14 @@ def query_rag_stream():
                 "answer": synthesis["answer"],
                 "citations": synthesis["citations"],
                 "claimVerifications": synthesis["claimVerifications"],
+                "tokenUsage": synthesis.get("tokenUsage"),
                 "metrics": synthesis["metrics"],
                 "activeConfig": mask_config_for_client(merged_config),
             }
             resolved_chat_id = sql_db.record_query_run(resp_obj, user_id=user_id, chat_id=chat_id)
             resp_obj["chatId"] = resolved_chat_id
             resp_obj["chatSessions"] = sql_db.list_chat_sessions(user_id)
+            resp_obj["analytics"] = sql_db.get_user_analytics(user_id)
 
             yield _format_sse_event("done", resp_obj)
         except Exception as exc:

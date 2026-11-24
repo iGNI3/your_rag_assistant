@@ -22,6 +22,7 @@ import { PipelineChoreographer } from '../components/PipelineChoreographer';
 
 export type AppPageId =
   | 'chat'
+  | 'analytics'
   | 'overview'
   | 'ingest'
   | 'chunking'

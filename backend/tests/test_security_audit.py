@@ -354,6 +354,94 @@ class SecurityAuditIntegrationTests(unittest.TestCase):
             t.join()
         self.assertEqual(errors, [])
 
+    def test_09_analytics_dashboard_and_token_metering(self):
+        # 1. Verify exact provider token extraction across all provider response formats
+        u_gem = self.llm_engine._extract_provider_usage(
+            "gemini", "gemini-2.5-flash",
+            {"usageMetadata": {"promptTokenCount": 310, "candidatesTokenCount": 145}},
+            "in", "out",
+        )
+        self.assertEqual((u_gem["inputTokens"], u_gem["outputTokens"], u_gem["source"]), (310, 145, "provider_api"))
+
+        u_oai = self.llm_engine._extract_provider_usage(
+            "openai", "gpt-4o-mini",
+            {"usage": {"prompt_tokens": 500, "completion_tokens": 200}},
+            "in", "out",
+        )
+        self.assertEqual((u_oai["inputTokens"], u_oai["outputTokens"], u_oai["source"]), (500, 200, "provider_api"))
+
+        u_anth = self.llm_engine._extract_provider_usage(
+            "anthropic", "claude-3-5-haiku-latest",
+            {"usage": {"input_tokens": 420, "output_tokens": 180}},
+            "in", "out",
+        )
+        self.assertEqual((u_anth["inputTokens"], u_anth["outputTokens"], u_anth["source"]), (420, 180, "provider_api"))
+
+        u_oll = self.llm_engine._extract_provider_usage(
+            "ollama", "llama3.1:8b",
+            {"prompt_eval_count": 250, "eval_count": 90},
+            "in", "out",
+        )
+        self.assertEqual((u_oll["inputTokens"], u_oll["outputTokens"], u_oll["source"]), (250, 90, "provider_api"))
+        self.llm_engine._consume_last_llm_usage()
+
+        # 2. Per-user analytics isolation & live aggregation via GET /api/analytics
+        c_u1 = self.app.test_client()
+        c_u2 = self.app.test_client()
+        u1 = self._register_user(c_u1, "dash_user1", "dash1@example.com").get_json()
+        u2 = self._register_user(c_u2, "dash_user2", "dash2@example.com").get_json()
+        h1 = {"Authorization": f"Bearer {u1['token']}"}
+        h2 = {"Authorization": f"Bearer {u2['token']}"}
+
+        # User 1 uploads two docs with distinct strategies and runs a query
+        r_d1 = c_u1.post(
+            "/api/ingest/text",
+            headers=h1,
+            json={
+                "title": "Insurance Policy A",
+                "content": "Room rent capping is 2% of sum insured per day. Waiting period for cataract is 24 months.",
+                "autoOptimize": False,
+                "strategy": "semantic",
+            },
+        )
+        self.assertEqual(r_d1.status_code, 200)
+        r_d2 = c_u1.post(
+            "/api/ingest/text",
+            headers=h1,
+            json={
+                "title": "Claims Guide B",
+                "content": "Submit cashless pre-authorization 48 hours prior to planned hospitalization.",
+                "autoOptimize": False,
+                "strategy": "hierarchical",
+            },
+        )
+        self.assertEqual(r_d2.status_code, 200)
+
+        q1 = c_u1.post("/api/query", headers=h1, json={"prompt": "What is the room rent capping?"})
+        self.assertEqual(q1.status_code, 200)
+        q1_data = q1.get_json()
+        self.assertIn("tokenUsage", q1_data)
+        self.assertGreater(q1_data["tokenUsage"]["totalTokens"], 0)
+
+        a1 = c_u1.get("/api/analytics", headers=h1).get_json()
+        self.assertEqual(a1["corpusTotals"]["totalDocuments"], 2)
+        self.assertGreaterEqual(a1["corpusTotals"]["totalChunks"], 2)
+        self.assertGreater(a1["corpusTotals"]["totalIndexedTokens"], 0)
+        self.assertEqual(a1["tokenTotals"]["totalQueries"], 1)
+        self.assertGreater(a1["tokenTotals"]["totalTokens"], 0)
+        strategies_seen = {s["strategy"] for s in a1["strategyDistribution"]}
+        self.assertEqual(strategies_seen, {"semantic", "hierarchical"})
+        self.assertEqual(len(a1["perDocumentMetrics"]), 2)
+        self.assertEqual(len(a1["queryTokenTimeline"]), 1)
+
+        # User 2 must see 0 documents, 0 chunks, 0 tokens (strict tenant isolation)
+        a2 = c_u2.get("/api/analytics", headers=h2).get_json()
+        self.assertEqual(a2["corpusTotals"]["totalDocuments"], 0)
+        self.assertEqual(a2["corpusTotals"]["totalChunks"], 0)
+        self.assertEqual(a2["tokenTotals"]["totalTokens"], 0)
+        self.assertEqual(a2["perDocumentMetrics"], [])
+        self.assertEqual(a2["queryTokenTimeline"], [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

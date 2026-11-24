@@ -221,12 +221,13 @@ Exposes all HTTP endpoints, enforces per-user authentication, and wires the full
 | `rechunk_doc()` (`POST /api/documents/<id>/rechunk`) & `delete_doc()` (`DELETE /api/documents/<id>`) | Re-chunks any document live with a new strategy or deletes it from both HNSW and the SQL vault. |
 | `query_rag()` (`POST /api/query`) & `query_rag_stream()` (`POST /api/query/stream`) | Runs the full RAG pipeline for the user's prompt and active `chatId`. `/api/query/stream` emits live Server-Sent Events (`stage`, `retrieval`, `token`, `done`) with `X-Accel-Buffering: no` for instant token-by-token typing; `/api/query` returns the atomic JSON payload. |
 | `get_chats()`, `create_chat()`, `rename_chat()`, `remove_chat()` (`/api/chats`) | REST endpoints powering the sidebar Chat History list, `+ NEW CHAT`, inline rename, and delete. |
-| `get_state()` (`GET /api/state`) | Hydrates the frontend with the signed-in user's documents, chunks, HNSW stats, config, chat sessions, query history, and saved findings. |
+| `get_state()` (`GET /api/state`) & `get_user_analytics_route()` (`GET /api/analytics`) | Hydrates the frontend with the signed-in user's documents, chunks, HNSW stats, config, chat sessions, query history, saved findings, and per-user token/chunk/technique analytics (`get_user_analytics()`). |
 
 ### 6.7 Key Frontend Modules & Functions (`src/`)
 | Script | Key Functions / Components | Responsibility |
 | :--- | :--- | :--- |
-| `src/App.tsx` | `fetchFullState()`, `handleExecuteQuery()`, `handleCreateChat()`, `handleSelectChat()`, `handleRenameChat()`, `handleDeleteChat()`, `handleUploadFiles()` | Manages auth state, 9-page studio navigation, theme/palette switching, and the sidebar **Chat History** panel. |
+| `src/App.tsx` | `fetchFullState()`, `fetchAnalytics()`, `handleExecuteQuery()`, `handleCreateChat()`, `handleSelectChat()`, `handleRenameChat()`, `handleDeleteChat()`, `handleUploadFiles()` | Manages auth state, 10-page studio navigation, theme/palette switching, and the sidebar **Chat History** panel. |
+| `src/pages/AnalyticsDashboardPage.tsx` | `AnalyticsDashboardPage`, `InteractiveDonutChart` | Renders the per-user **Usage & Token Dashboard**: real provider/estimated token KPIs, interactive SVG Pie/Donut charts (chunking techniques & token stages/providers), token usage trend area/line graph, chunks/tokens-per-file bar chart, format/OCR mix bar, and searchable/sortable per-document technique audit table. |
 | `src/pages/ChatHomePage.tsx` | `openSourcePreviewModal()`, `restoreDocumentStructure()`, `parseStructuredTableRow()`, `parsePageIntoBlocks()`, `findPassageCharRange()` | Renders the conversational chat thread, 4-stage live answering animation, and the **Floating Full Document Reader** with multi-line PDF table unwrapping, structured HTML table rendering, and exact offset-based inline/row highlighting. |
 | `src/components/RichMarkdownRenderer.tsx` | `renderInlineTokens()`, `normalizeContentForTables()`, `isPipeTableRow()`, `parseChatStructuredRow()` | Renders chat answers with clickable `[SOURCE X]` citation hover-tooltip pills, copyable code blocks, Markdown pipe tables, and structured policy tables. |
 
@@ -242,7 +243,7 @@ Exposes all HTTP endpoints, enforces per-user authentication, and wires the full
 
 ## 8. Security, Authentication, Multi-Tenant Isolation & Prompt-Injection Audit
 
-A full-stack security audit identified **20 findings** across secret management, SSRF, filesystem exposure, authentication, multi-tenant isolation, and LLM prompt injection. All 20 findings have been remediated and verified with an automated integration test suite (`backend/tests/test_security_audit.py`, 8/8 passing) plus full TypeScript (`tsc --noEmit`) and Vite production builds.
+A full-stack security audit identified **20 findings** across secret management, SSRF, filesystem exposure, authentication, multi-tenant isolation, and LLM prompt injection. All 20 findings plus per-user analytics isolation & token metering have been remediated and verified with an automated integration test suite (`backend/tests/test_security_audit.py`, 9/9 passing) plus full TypeScript (`tsc --noEmit`) and Vite production builds.
 
 ### 8.1 Summary of Audit Findings & Implemented Fixes
 

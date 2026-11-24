@@ -189,8 +189,26 @@ export interface AgenticRagResponse {
     relevanceScore: number;
   }>;
   claimVerifications: ClaimVerification[];
+  tokenUsage?: QueryTokenUsage;
   metrics: ComprehensiveMetrics;
   activeConfig: RagPipelineConfig;
+}
+
+export interface StageTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  provider: string;
+  model: string;
+  source: 'provider_api' | 'estimated';
+}
+
+export interface QueryTokenUsage {
+  reshaper: StageTokenUsage;
+  generator: StageTokenUsage;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalTokens: number;
 }
 
 export interface RagPipelineConfig {
@@ -330,5 +348,101 @@ export interface DatabaseTelemetry {
     rowCount: number;
     purpose: string;
   }>;
+}
+
+export interface StrategyDistributionItem {
+  strategy: string;
+  documentCount: number;
+  chunkCount: number;
+  indexedTokens: number;
+}
+
+export interface FormatDistributionItem {
+  format: string;
+  documentCount: number;
+  chunkCount: number;
+  indexedTokens: number;
+}
+
+export interface ProviderUsageItem {
+  provider: string;
+  model: string;
+  queries: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface DocumentAnalyticsRow {
+  documentId: string;
+  title: string;
+  filename: string;
+  format: string;
+  ingestedAt: string;
+  chunkCount: number;
+  indexedTokens: number;
+  avgTokensPerChunk: number;
+  selectedStrategy: string;
+  autoOptimized: boolean;
+  ocrUsed: boolean;
+  ocrConfidence: number;
+  noiseReductionPct: number;
+  extractionOperations: string[];
+  avgCoherence: number;
+  avgInfoDensity: number;
+}
+
+export interface QueryTokenTimelinePoint {
+  queryId: string;
+  timestamp: string;
+  label: string;
+  promptPreview: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  reshaperTokens: number;
+  generatorTokens: number;
+  provider: string;
+  model: string;
+  source: 'provider_api' | 'estimated';
+  latencyMs: number;
+  groundedness: number;
+}
+
+export interface UserAnalyticsSummary {
+  corpusTotals: {
+    totalDocuments: number;
+    totalChunks: number;
+    totalIndexedTokens: number;
+    avgChunksPerDocument: number;
+    avgTokensPerChunk: number;
+    ocrDocumentCount: number;
+    nativeDocumentCount: number;
+    autoOptimizedCount: number;
+    manualStrategyCount: number;
+    dominantStrategy: string;
+  };
+  tokenTotals: {
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalTokens: number;
+    reshaperInputTokens: number;
+    reshaperOutputTokens: number;
+    reshaperTotalTokens: number;
+    generatorInputTokens: number;
+    generatorOutputTokens: number;
+    generatorTotalTokens: number;
+    avgTokensPerQuery: number;
+    avgLatencyMs: number;
+    avgGroundedness: number;
+    totalQueries: number;
+    providerApiQueries: number;
+    estimatedQueries: number;
+  };
+  strategyDistribution: StrategyDistributionItem[];
+  formatDistribution: FormatDistributionItem[];
+  providerBreakdown: ProviderUsageItem[];
+  perDocumentMetrics: DocumentAnalyticsRow[];
+  queryTokenTimeline: QueryTokenTimelinePoint[];
 }
 

@@ -1415,3 +1415,264 @@ class PersistentRAGDatabase:
                 },
             ],
         }
+
+    def get_user_analytics(self, user_id: str = "usr_demo_admin") -> Dict[str, Any]:
+        """
+        Computes strictly per-user corpus, chunking technique, extraction/OCR, and
+        LLM token usage analytics across documents, vector_chunks, and query_runs.
+        """
+        def _est_tok(txt: str) -> int:
+            s = (txt or "").strip()
+            return max(1, (len(s) + 3) // 4) if s else 0
+
+        with self._get_conn() as conn:
+            doc_rows = conn.execute(
+                """
+                SELECT id, title, filename, format, ingested_at, selected_strategy,
+                       auto_optimized, extraction_telemetry_json, chunk_count
+                FROM documents
+                WHERE user_id = ?
+                ORDER BY ingested_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+
+            chunk_rows = conn.execute(
+                """
+                SELECT document_id, token_count, coherence_score, information_density, strategy
+                FROM vector_chunks
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchall()
+
+            run_rows = conn.execute(
+                """
+                SELECT query_id, timestamp, original_prompt, answer, total_latency_ms,
+                       groundedness_faithfulness, full_response_json
+                FROM query_runs
+                WHERE user_id = ?
+                ORDER BY timestamp ASC
+                """,
+                (user_id,),
+            ).fetchall()
+
+        # Aggregate chunk stats per document
+        doc_chunk_agg: Dict[str, Dict[str, Any]] = {}
+        total_indexed_tokens = 0
+        for ch in chunk_rows:
+            did = ch["document_id"]
+            toks = int(ch["token_count"] or 0)
+            total_indexed_tokens += toks
+            entry = doc_chunk_agg.get(did)
+            if entry is None:
+                entry = {"count": 0, "tokens": 0, "coherenceSum": 0.0, "densitySum": 0.0}
+                doc_chunk_agg[did] = entry
+            entry["count"] += 1
+            entry["tokens"] += toks
+            entry["coherenceSum"] += float(ch["coherence_score"] or 0.0)
+            entry["densitySum"] += float(ch["information_density"] or 0.0)
+
+        strategy_map: Dict[str, Dict[str, Any]] = {}
+        format_map: Dict[str, Dict[str, Any]] = {}
+        per_document_metrics: List[Dict[str, Any]] = []
+        ocr_doc_count = 0
+        auto_opt_doc_count = 0
+
+        for d in doc_rows:
+            did = d["id"]
+            agg = doc_chunk_agg.get(did, {"count": int(d["chunk_count"] or 0), "tokens": 0, "coherenceSum": 0.0, "densitySum": 0.0})
+            c_count = agg["count"] or int(d["chunk_count"] or 0)
+            d_tokens = agg["tokens"]
+            avg_tok = round(d_tokens / c_count, 1) if c_count > 0 else 0.0
+            avg_coh = round(agg["coherenceSum"] / agg["count"], 1) if agg["count"] > 0 else 0.0
+            avg_den = round(agg["densitySum"] / agg["count"], 1) if agg["count"] > 0 else 0.0
+
+            try:
+                tel = json.loads(d["extraction_telemetry_json"] or "{}")
+            except Exception:
+                tel = {}
+            ocr_used = bool(tel.get("ocrUsed"))
+            if ocr_used:
+                ocr_doc_count += 1
+            auto_opt = bool(d["auto_optimized"])
+            if auto_opt:
+                auto_opt_doc_count += 1
+
+            strategy = str(d["selected_strategy"] or "semantic").strip().lower()
+            fmt = str(d["format"] or "TXT").strip().upper()
+
+            s_ent = strategy_map.setdefault(strategy, {"strategy": strategy, "documentCount": 0, "chunkCount": 0, "indexedTokens": 0})
+            s_ent["documentCount"] += 1
+            s_ent["chunkCount"] += c_count
+            s_ent["indexedTokens"] += d_tokens
+
+            f_ent = format_map.setdefault(fmt, {"format": fmt, "documentCount": 0, "chunkCount": 0, "indexedTokens": 0})
+            f_ent["documentCount"] += 1
+            f_ent["chunkCount"] += c_count
+            f_ent["indexedTokens"] += d_tokens
+
+            per_document_metrics.append({
+                "documentId": did,
+                "title": d["title"],
+                "filename": d["filename"],
+                "format": fmt,
+                "ingestedAt": d["ingested_at"],
+                "chunkCount": c_count,
+                "indexedTokens": d_tokens,
+                "avgTokensPerChunk": avg_tok,
+                "selectedStrategy": strategy,
+                "autoOptimized": auto_opt,
+                "ocrUsed": ocr_used,
+                "ocrConfidence": float(tel.get("ocrConfidence") or 100.0),
+                "noiseReductionPct": float(tel.get("noiseReductionPct") or tel.get("reductionPct") or 0.0),
+                "extractionOperations": list(tel.get("operations") or [])[:5],
+                "avgCoherence": avg_coh,
+                "avgInfoDensity": avg_den,
+            })
+
+        # Aggregate LLM token usage across all query_runs (with legacy fallback estimation)
+        reshaper_in = 0
+        reshaper_out = 0
+        gen_in = 0
+        gen_out = 0
+        provider_api_queries = 0
+        estimated_queries = 0
+        latency_sum = 0.0
+        grounded_sum = 0.0
+        provider_map: Dict[str, Dict[str, Any]] = {}
+        timeline: List[Dict[str, Any]] = []
+
+        for r in run_rows:
+            try:
+                full_obj = json.loads(r["full_response_json"] or "{}")
+            except Exception:
+                full_obj = {}
+
+            tu = full_obj.get("tokenUsage") if isinstance(full_obj.get("tokenUsage"), dict) else None
+            if tu and isinstance(tu.get("reshaper"), dict) and isinstance(tu.get("generator"), dict):
+                r_in = int(tu["reshaper"].get("inputTokens") or 0)
+                r_out = int(tu["reshaper"].get("outputTokens") or 0)
+                g_in = int(tu["generator"].get("inputTokens") or 0)
+                g_out = int(tu["generator"].get("outputTokens") or 0)
+                g_prov = str(tu["generator"].get("provider") or "builtin_local")
+                g_model = str(tu["generator"].get("model") or "local")
+                r_src = str(tu["reshaper"].get("source") or "estimated")
+                g_src = str(tu["generator"].get("source") or "estimated")
+                is_exact = (r_src == "provider_api" or g_src == "provider_api")
+            else:
+                # Legacy query run recorded before real token tracking: estimate cleanly
+                orig_p = str(r["original_prompt"] or "")
+                ans = str(r["answer"] or "")
+                pr_obj = full_obj.get("promptReshape") or {}
+                ret_chunks = full_obj.get("retrievedChunks") or []
+                ctx_tokens = sum(_est_tok(str(c.get("content") or "")) for c in ret_chunks)
+                r_in = _est_tok(orig_p) + 120
+                r_out = _est_tok(str(pr_obj.get("reshapedPrimaryQuery") or orig_p)) + _est_tok(str(pr_obj.get("hydeDocument") or ""))
+                g_in = _est_tok(orig_p) + ctx_tokens + 180
+                g_out = _est_tok(ans)
+                active_cfg = full_obj.get("activeConfig") or {}
+                g_prov = str(active_cfg.get("generatorProvider") or "builtin_local")
+                g_model = str(active_cfg.get("generatorModel") or "local")
+                is_exact = False
+
+            if is_exact:
+                provider_api_queries += 1
+            else:
+                estimated_queries += 1
+
+            reshaper_in += r_in
+            reshaper_out += r_out
+            gen_in += g_in
+            gen_out += g_out
+
+            q_in = r_in + g_in
+            q_out = r_out + g_out
+            q_tot = q_in + q_out
+            lat_ms = int(r["total_latency_ms"] or 0)
+            gnd = float(r["groundedness_faithfulness"] or 0.0)
+            latency_sum += lat_ms
+            grounded_sum += gnd
+
+            p_key = f"{g_prov}::{g_model}"
+            p_ent = provider_map.setdefault(
+                p_key,
+                {
+                    "provider": g_prov,
+                    "model": g_model,
+                    "queries": 0,
+                    "inputTokens": 0,
+                    "outputTokens": 0,
+                    "totalTokens": 0,
+                },
+            )
+            p_ent["queries"] += 1
+            p_ent["inputTokens"] += q_in
+            p_ent["outputTokens"] += q_out
+            p_ent["totalTokens"] += q_tot
+
+            ts_str = str(r["timestamp"] or "")
+            short_label = ts_str[5:16].replace("T", " ") if len(ts_str) >= 16 else ts_str
+            prompt_preview = " ".join(str(r["original_prompt"] or "").split())[:68]
+            timeline.append({
+                "queryId": r["query_id"],
+                "timestamp": ts_str,
+                "label": short_label,
+                "promptPreview": prompt_preview,
+                "inputTokens": q_in,
+                "outputTokens": q_out,
+                "totalTokens": q_tot,
+                "reshaperTokens": r_in + r_out,
+                "generatorTokens": g_in + g_out,
+                "provider": g_prov,
+                "model": g_model,
+                "source": "provider_api" if is_exact else "estimated",
+                "latencyMs": lat_ms,
+                "groundedness": round(gnd, 3),
+            })
+
+        total_queries = len(run_rows)
+        total_in = reshaper_in + gen_in
+        total_out = reshaper_out + gen_out
+        total_tok = total_in + total_out
+
+        strategy_dist = sorted(strategy_map.values(), key=lambda x: (-x["chunkCount"], -x["documentCount"]))
+        format_dist = sorted(format_map.values(), key=lambda x: (-x["documentCount"], -x["chunkCount"]))
+        provider_breakdown = sorted(provider_map.values(), key=lambda x: -x["totalTokens"])
+
+        return {
+            "corpusTotals": {
+                "totalDocuments": len(doc_rows),
+                "totalChunks": len(chunk_rows),
+                "totalIndexedTokens": total_indexed_tokens,
+                "avgChunksPerDocument": round(len(chunk_rows) / len(doc_rows), 1) if doc_rows else 0.0,
+                "avgTokensPerChunk": round(total_indexed_tokens / len(chunk_rows), 1) if chunk_rows else 0.0,
+                "ocrDocumentCount": ocr_doc_count,
+                "nativeDocumentCount": max(0, len(doc_rows) - ocr_doc_count),
+                "autoOptimizedCount": auto_opt_doc_count,
+                "manualStrategyCount": max(0, len(doc_rows) - auto_opt_doc_count),
+                "dominantStrategy": strategy_dist[0]["strategy"] if strategy_dist else "none",
+            },
+            "tokenTotals": {
+                "totalInputTokens": total_in,
+                "totalOutputTokens": total_out,
+                "totalTokens": total_tok,
+                "reshaperInputTokens": reshaper_in,
+                "reshaperOutputTokens": reshaper_out,
+                "reshaperTotalTokens": reshaper_in + reshaper_out,
+                "generatorInputTokens": gen_in,
+                "generatorOutputTokens": gen_out,
+                "generatorTotalTokens": gen_in + gen_out,
+                "avgTokensPerQuery": round(total_tok / total_queries, 1) if total_queries else 0.0,
+                "avgLatencyMs": round(latency_sum / total_queries, 1) if total_queries else 0.0,
+                "avgGroundedness": round(grounded_sum / total_queries, 3) if total_queries else 0.0,
+                "totalQueries": total_queries,
+                "providerApiQueries": provider_api_queries,
+                "estimatedQueries": estimated_queries,
+            },
+            "strategyDistribution": strategy_dist,
+            "formatDistribution": format_dist,
+            "providerBreakdown": provider_breakdown,
+            "perDocumentMetrics": per_document_metrics,
+            "queryTokenTimeline": timeline[-30:],
+        }

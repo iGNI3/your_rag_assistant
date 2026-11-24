@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   MessageSquare,
+  PieChart,
   Activity,
   FileText,
   Scissors,
@@ -34,6 +35,7 @@ import {
   ModelPortalCatalogItem,
   RagPipelineConfig,
   SavedFinding,
+  UserAnalyticsSummary,
   UserProfile,
   VectorDbStats,
 } from './types';
@@ -44,6 +46,7 @@ import {
   USE_COOKIE_CREDENTIALS,
 } from './api';
 import { AppPageId, OverviewPage } from './pages/OverviewPage';
+import { AnalyticsDashboardPage } from './pages/AnalyticsDashboardPage';
 import { AuthPage } from './pages/AuthPage';
 import { ChatHomePage } from './pages/ChatHomePage';
 import { IngestOcrPage } from './pages/IngestOcrPage';
@@ -82,8 +85,18 @@ const PAGE_ROUTES: PageRouteDef[] = [
     icon: MessageSquare,
   },
   {
-    id: 'overview',
+    id: 'analytics',
     step: '02',
+    group: 'HOME ASSISTANT',
+    title: 'Usage, Token & Corpus Analytics Dashboard',
+    sidebarLabel: 'Usage & Token Dashboard',
+    subtitle:
+      'Live per-user token usage (Reshaper vs Generator), interactive pie & trend charts, chunks per uploaded file, and extraction/chunking technique breakdown.',
+    icon: PieChart,
+  },
+  {
+    id: 'overview',
+    step: '03',
     group: 'HOME ASSISTANT',
     title: 'Pipeline Architecture & Control Center',
     sidebarLabel: 'Pipeline Architecture',
@@ -93,7 +106,7 @@ const PAGE_ROUTES: PageRouteDef[] = [
   },
   {
     id: 'ingest',
-    step: '03',
+    step: '04',
     group: 'DATA & VECTOR PIPELINE',
     title: 'Document Ingestion & Python OCR Lab',
     sidebarLabel: 'Document & OCR Ingest',
@@ -103,7 +116,7 @@ const PAGE_ROUTES: PageRouteDef[] = [
   },
   {
     id: 'chunking',
-    step: '04',
+    step: '05',
     group: 'DATA & VECTOR PIPELINE',
     title: '5-Strategy Chunking Optimizer & Slice Reader',
     sidebarLabel: '5-Strategy Chunking',
@@ -113,7 +126,7 @@ const PAGE_ROUTES: PageRouteDef[] = [
   },
   {
     id: 'vectordb',
-    step: '05',
+    step: '06',
     group: 'DATA & VECTOR PIPELINE',
     title: 'HNSW + BM25+ Vector Manifold Studio',
     sidebarLabel: '2D Vector Manifold',
@@ -123,7 +136,7 @@ const PAGE_ROUTES: PageRouteDef[] = [
   },
   {
     id: 'workbench',
-    step: '06',
+    step: '07',
     group: 'AUDIT & INSPECTION',
     title: 'Deep Prompt Reshaper & Reranker Inspector',
     sidebarLabel: 'Prompt & CRAG Inspector',
@@ -133,7 +146,7 @@ const PAGE_ROUTES: PageRouteDef[] = [
   },
   {
     id: 'metrics',
-    step: '07',
+    step: '08',
     group: 'AUDIT & INSPECTION',
     title: 'Comprehensive RAGAS & Latency Evaluation Suite',
     sidebarLabel: 'Evaluation Metrics',
@@ -143,7 +156,7 @@ const PAGE_ROUTES: PageRouteDef[] = [
   },
   {
     id: 'database',
-    step: '08',
+    step: '09',
     group: 'AUDIT & INSPECTION',
     title: 'SQLite3 (WAL) Database & Findings Vault',
     sidebarLabel: 'SQLite DB & Findings',
@@ -153,7 +166,7 @@ const PAGE_ROUTES: PageRouteDef[] = [
   },
   {
     id: 'settings',
-    step: '09',
+    step: '10',
     group: 'SYSTEM & ACCOUNT',
     title: 'Settings: Account, Models, API Keys & Offline Portal',
     sidebarLabel: 'Settings & Account',
@@ -218,6 +231,9 @@ export const App: React.FC = () => {
   const [savedFindings, setSavedFindings] = useState<SavedFinding[]>([]);
   const [databaseTelemetry, setDatabaseTelemetry] =
     useState<DatabaseTelemetry | null>(null);
+  const [analyticsSummary, setAnalyticsSummary] =
+    useState<UserAnalyticsSummary | null>(null);
+  const [isRefreshingAnalytics, setIsRefreshingAnalytics] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelPortalCatalogItem[]>(
     []
   );
@@ -283,6 +299,21 @@ export const App: React.FC = () => {
     setActiveChatId(null);
     setSavedFindings([]);
     setDatabaseTelemetry(null);
+    setAnalyticsSummary(null);
+  };
+
+  const fetchAnalytics = async () => {
+    setIsRefreshingAnalytics(true);
+    try {
+      const resp = await authFetch('/api/analytics');
+      if (resp.ok) {
+        setAnalyticsSummary(await resp.json());
+      }
+    } catch (e) {
+      console.error('Failed to refresh analytics:', e);
+    } finally {
+      setIsRefreshingAnalytics(false);
+    }
   };
 
   const fetchFullState = async () => {
@@ -311,6 +342,7 @@ export const App: React.FC = () => {
       });
       setSavedFindings(data.savedFindings || []);
       setDatabaseTelemetry(data.databaseTelemetry || null);
+      if (data.analytics) setAnalyticsSummary(data.analytics);
       setModelCatalog(data.modelPortalCatalog || []);
     } catch (e) {
       console.error('Failed to fetch RAG state:', e);
@@ -431,7 +463,10 @@ export const App: React.FC = () => {
     }
 
     const commitFinalResult = async (
-      result: AgenticRagResponse & { chatSessions?: ChatSession[] }
+      result: AgenticRagResponse & {
+        chatSessions?: ChatSession[];
+        analytics?: UserAnalyticsSummary;
+      }
     ) => {
       setLatestQuery(result);
       if (result.chatId) {
@@ -439,6 +474,9 @@ export const App: React.FC = () => {
       }
       if (result.chatSessions) {
         setChatSessions(result.chatSessions);
+      }
+      if (result.analytics) {
+        setAnalyticsSummary(result.analytics);
       }
       setQueryHistory((prev) => [
         result,
@@ -1289,7 +1327,7 @@ export const App: React.FC = () => {
                 }}
               >
                 <span className="clay-tag clay-tag-terracotta">
-                  PAGE {currentPageDef.step} OF 09 // {currentPageDef.group}
+                  PAGE {currentPageDef.step} OF 10 // {currentPageDef.group}
                 </span>
                 <span className="clay-tag clay-tag-sage">
                   <Shield size={12} />
@@ -1404,6 +1442,16 @@ export const App: React.FC = () => {
                       });
                     }}
                     onOpenModelsPage={() => navigateToPage('settings')}
+                  />
+                )}
+
+                {activePage === 'analytics' && (
+                  <AnalyticsDashboardPage
+                    analytics={analyticsSummary}
+                    config={config}
+                    isRefreshing={isRefreshingAnalytics}
+                    onRefresh={fetchAnalytics}
+                    onNavigate={navigateToPage}
                   />
                 )}
 

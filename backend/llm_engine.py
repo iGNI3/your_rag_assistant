@@ -5,11 +5,97 @@ import os
 import re
 import socket
 import struct
+import threading
 import time
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone
 from typing import Dict, Any, Generator, List, Optional, Tuple
+
+_LAST_LLM_USAGE = threading.local()
+
+
+def estimate_token_count(text: str) -> int:
+    if not text:
+        return 0
+    s = text.strip()
+    if not s:
+        return 0
+    return max(1, int(math.ceil(len(s) / 4.0)))
+
+
+def _record_llm_usage(
+    provider: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    source: str,
+) -> Dict[str, Any]:
+    in_tok = max(0, int(input_tokens or 0))
+    out_tok = max(0, int(output_tokens or 0))
+    usage = {
+        "inputTokens": in_tok,
+        "outputTokens": out_tok,
+        "totalTokens": in_tok + out_tok,
+        "provider": str(provider or "builtin_local"),
+        "model": str(model or "local"),
+        "source": source,
+    }
+    _LAST_LLM_USAGE.value = usage
+    return usage
+
+
+def _consume_last_llm_usage() -> Optional[Dict[str, Any]]:
+    val = getattr(_LAST_LLM_USAGE, "value", None)
+    _LAST_LLM_USAGE.value = None
+    return val
+
+
+def _extract_provider_usage(
+    provider: str,
+    model: str,
+    response_obj: Optional[Dict[str, Any]],
+    fallback_input_text: str,
+    fallback_output_text: str,
+) -> Dict[str, Any]:
+    """
+    Extracts exact token counts from OpenAI, Groq, OpenRouter, LM Studio, Gemini,
+    Anthropic, or Ollama responses; falls back cleanly to character-based estimation.
+    """
+    res = response_obj if isinstance(response_obj, dict) else {}
+    in_tok: Optional[int] = None
+    out_tok: Optional[int] = None
+
+    if provider == "gemini":
+        meta = res.get("usageMetadata") or {}
+        if isinstance(meta, dict) and (meta.get("promptTokenCount") is not None or meta.get("candidatesTokenCount") is not None):
+            in_tok = int(meta.get("promptTokenCount") or 0)
+            out_tok = int(meta.get("candidatesTokenCount") or 0)
+    elif provider == "anthropic":
+        usage = res.get("usage") or {}
+        if isinstance(usage, dict) and (usage.get("input_tokens") is not None or usage.get("output_tokens") is not None):
+            in_tok = int(usage.get("input_tokens") or 0)
+            out_tok = int(usage.get("output_tokens") or 0)
+    elif provider == "ollama":
+        if res.get("prompt_eval_count") is not None or res.get("eval_count") is not None:
+            in_tok = int(res.get("prompt_eval_count") or 0)
+            out_tok = int(res.get("eval_count") or 0)
+    else:
+        usage = res.get("usage") or {}
+        if isinstance(usage, dict) and (usage.get("prompt_tokens") is not None or usage.get("completion_tokens") is not None):
+            in_tok = int(usage.get("prompt_tokens") or 0)
+            out_tok = int(usage.get("completion_tokens") or 0)
+
+    if in_tok is not None and out_tok is not None and (in_tok > 0 or out_tok > 0):
+        return _record_llm_usage(provider, model, in_tok, out_tok, "provider_api")
+
+    return _record_llm_usage(
+        provider,
+        model,
+        estimate_token_count(fallback_input_text),
+        estimate_token_count(fallback_output_text),
+        "estimated",
+    )
 
 from chunker import extract_top_keywords
 
@@ -468,47 +554,57 @@ def call_external_llm_if_available(
     config: Dict[str, Any],
     history_messages: Optional[List[Dict[str, str]]] = None,
 ) -> Optional[str]:
+    _LAST_LLM_USAGE.value = None
     eff_provider, eff_model = _resolve_effective_provider_and_model(provider, model, config)
     if eff_provider in ("builtin_local", "offline_gguf"):
         return None
 
     local_eps = config.get("localEndpoints", {})
     norm_history = _normalize_history_messages(history_messages)
+    full_in_text = system_prompt + "\n" + "\n".join(m["content"] for m in norm_history) + "\n" + user_prompt
 
     if eff_provider == "ollama":
         raw_base = local_eps.get("ollamaUrl") or "http://localhost:11434"
         base_url = validate_local_endpoint_url(raw_base)
         if not base_url:
             return None
+        chosen_model = eff_model or "llama3.1:8b"
         messages = [{"role": "system", "content": system_prompt}, *norm_history, {"role": "user", "content": user_prompt}]
         res = _http_post_json(
             f"{base_url}/api/chat",
             {
-                "model": eff_model or "llama3.1:8b",
+                "model": chosen_model,
                 "stream": False,
                 "messages": messages,
             },
             {},
         )
-        return res.get("message", {}).get("content") if res else None
+        txt = res.get("message", {}).get("content") if res else None
+        if txt:
+            _extract_provider_usage("ollama", chosen_model, res, full_in_text, txt)
+        return txt
 
     if eff_provider == "lmstudio":
         raw_base = local_eps.get("lmStudioUrl") or "http://localhost:1234/v1"
         base_url = validate_local_endpoint_url(raw_base)
         if not base_url:
             return None
+        chosen_model = eff_model or "local-model"
         messages = [{"role": "system", "content": system_prompt}, *norm_history, {"role": "user", "content": user_prompt}]
         res = _http_post_json(
             f"{base_url}/chat/completions",
             {
-                "model": eff_model or "local-model",
+                "model": chosen_model,
                 "messages": messages,
                 "temperature": 0.2,
             },
             {},
         )
         choices = (res or {}).get("choices", [])
-        return choices[0].get("message", {}).get("content") if choices else None
+        txt = choices[0].get("message", {}).get("content") if choices else None
+        if txt:
+            _extract_provider_usage("lmstudio", chosen_model, res, full_in_text, txt)
+        return txt
 
     if eff_provider in ("openai", "groq", "openrouter"):
         key = _get_api_key(eff_provider, config)
@@ -544,6 +640,7 @@ def call_external_llm_if_available(
             if choices:
                 txt = choices[0].get("message", {}).get("content")
                 if txt:
+                    _extract_provider_usage(eff_provider, slug, res, full_in_text, txt)
                     return txt
         return None
 
@@ -574,7 +671,9 @@ def call_external_llm_if_available(
             if cands:
                 parts = cands[0].get("content", {}).get("parts", [])
                 if parts and parts[0].get("text"):
-                    return parts[0].get("text")
+                    txt = parts[0].get("text")
+                    _extract_provider_usage("gemini", gemini_slug, res, full_in_text, txt)
+                    return txt
         return None
 
     if eff_provider == "anthropic":
@@ -595,7 +694,9 @@ def call_external_llm_if_available(
             )
             content_list = (res or {}).get("content", [])
             if content_list and content_list[0].get("text"):
-                return content_list[0].get("text")
+                txt = content_list[0].get("text")
+                _extract_provider_usage("anthropic", slug, res, full_in_text, txt)
+                return txt
         return None
 
     return None
@@ -632,31 +733,40 @@ def stream_external_llm_if_available(
     Supports Gemini, OpenAI, Groq, OpenRouter, Anthropic, Ollama, and LM Studio.
     Yields incremental text chunks; yields nothing if unavailable so caller can fall back cleanly.
     """
+    _LAST_LLM_USAGE.value = None
     eff_provider, eff_model = _resolve_effective_provider_and_model(provider, model, config)
     if eff_provider in ("builtin_local", "offline_gguf"):
         return
 
     local_eps = config.get("localEndpoints", {})
     norm_history = _normalize_history_messages(history_messages)
+    full_in_text = system_prompt + "\n" + "\n".join(m["content"] for m in norm_history) + "\n" + user_prompt
 
     if eff_provider == "ollama":
         raw_base = local_eps.get("ollamaUrl") or "http://localhost:11434"
         base_url = validate_local_endpoint_url(raw_base)
         if not base_url:
             return
+        chosen_model = eff_model or "llama3.1:8b"
         messages = [{"role": "system", "content": system_prompt}, *norm_history, {"role": "user", "content": user_prompt}]
+        acc_text: List[str] = []
+        last_obj: Dict[str, Any] = {}
         try:
             for line in _http_post_stream_lines(
                 f"{base_url}/api/chat",
-                {"model": eff_model or "llama3.1:8b", "stream": True, "messages": messages},
+                {"model": chosen_model, "stream": True, "messages": messages},
                 {},
             ):
                 if not line:
                     continue
                 obj = json.loads(line)
+                last_obj = obj
                 delta = (obj.get("message") or {}).get("content") or ""
                 if delta:
+                    acc_text.append(delta)
                     yield delta
+            if acc_text:
+                _extract_provider_usage("ollama", chosen_model, last_obj, full_in_text, "".join(acc_text))
         except Exception:
             return
         return
@@ -666,11 +776,14 @@ def stream_external_llm_if_available(
         base_url = validate_local_endpoint_url(raw_base)
         if not base_url:
             return
+        chosen_model = eff_model or "local-model"
         messages = [{"role": "system", "content": system_prompt}, *norm_history, {"role": "user", "content": user_prompt}]
+        acc_text = []
+        usage_obj: Dict[str, Any] = {}
         try:
             for line in _http_post_stream_lines(
                 f"{base_url}/chat/completions",
-                {"model": eff_model or "local-model", "messages": messages, "temperature": 0.2, "stream": True},
+                {"model": chosen_model, "messages": messages, "temperature": 0.2, "stream": True},
                 {},
             ):
                 if not line.startswith("data:"):
@@ -679,11 +792,16 @@ def stream_external_llm_if_available(
                 if not data_str or data_str == "[DONE]":
                     break
                 obj = json.loads(data_str)
+                if obj.get("usage"):
+                    usage_obj = obj
                 choices = obj.get("choices") or []
                 if choices:
                     delta = (choices[0].get("delta") or {}).get("content") or ""
                     if delta:
+                        acc_text.append(delta)
                         yield delta
+            if acc_text:
+                _extract_provider_usage("lmstudio", chosen_model, usage_obj, full_in_text, "".join(acc_text))
         except Exception:
             return
         return
@@ -710,6 +828,8 @@ def stream_external_llm_if_available(
         messages = [{"role": "system", "content": system_prompt}, *norm_history, {"role": "user", "content": user_prompt}]
         for slug in slug_candidates:
             yielded_any = False
+            acc_text = []
+            usage_obj = {}
             try:
                 for line in _http_post_stream_lines(
                     endpoint,
@@ -722,16 +842,21 @@ def stream_external_llm_if_available(
                     if not data_str or data_str == "[DONE]":
                         break
                     obj = json.loads(data_str)
+                    if obj.get("usage"):
+                        usage_obj = obj
                     choices = obj.get("choices") or []
                     if choices:
                         delta = (choices[0].get("delta") or {}).get("content") or ""
                         if delta:
                             yielded_any = True
+                            acc_text.append(delta)
                             yield delta
                 if yielded_any:
+                    _extract_provider_usage(eff_provider, slug, usage_obj, full_in_text, "".join(acc_text))
                     return
             except Exception:
                 if yielded_any:
+                    _extract_provider_usage(eff_provider, slug, usage_obj, full_in_text, "".join(acc_text))
                     return
                 continue
         return
@@ -751,6 +876,8 @@ def stream_external_llm_if_available(
         for gemini_slug in _normalize_gemini_model_candidates(eff_model):
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{urllib.parse.quote(gemini_slug)}:streamGenerateContent?alt=sse&key={urllib.parse.quote(key)}"
             yielded_any = False
+            acc_text = []
+            usage_obj = {}
             try:
                 for line in _http_post_stream_lines(
                     url,
@@ -767,6 +894,8 @@ def stream_external_llm_if_available(
                     if not data_str or data_str == "[DONE]":
                         break
                     obj = json.loads(data_str)
+                    if obj.get("usageMetadata"):
+                        usage_obj = obj
                     cands = obj.get("candidates") or []
                     if cands:
                         parts = (cands[0].get("content") or {}).get("parts") or []
@@ -774,11 +903,14 @@ def stream_external_llm_if_available(
                             txt = part.get("text") or ""
                             if txt:
                                 yielded_any = True
+                                acc_text.append(txt)
                                 yield txt
                 if yielded_any:
+                    _extract_provider_usage("gemini", gemini_slug, usage_obj, full_in_text, "".join(acc_text))
                     return
             except Exception:
                 if yielded_any:
+                    _extract_provider_usage("gemini", gemini_slug, usage_obj, full_in_text, "".join(acc_text))
                     return
                 continue
         return
@@ -790,6 +922,9 @@ def stream_external_llm_if_available(
         anth_messages = [*norm_history, {"role": "user", "content": user_prompt}]
         for slug in [s for s in [(eff_model or "").strip(), "claude-3-5-haiku-latest"] if s]:
             yielded_any = False
+            acc_text = []
+            anth_in = 0
+            anth_out = 0
             try:
                 for line in _http_post_stream_lines(
                     "https://api.anthropic.com/v1/messages",
@@ -808,15 +943,27 @@ def stream_external_llm_if_available(
                     if not data_str:
                         continue
                     obj = json.loads(data_str)
-                    if obj.get("type") == "content_block_delta":
+                    if obj.get("type") == "message_start":
+                        u = (obj.get("message") or {}).get("usage") or {}
+                        anth_in = int(u.get("input_tokens") or anth_in)
+                    elif obj.get("type") == "message_delta":
+                        u = obj.get("usage") or {}
+                        anth_out = int(u.get("output_tokens") or anth_out)
+                    elif obj.get("type") == "content_block_delta":
                         delta = (obj.get("delta") or {}).get("text") or ""
                         if delta:
                             yielded_any = True
+                            acc_text.append(delta)
                             yield delta
                 if yielded_any:
+                    if anth_in > 0 or anth_out > 0:
+                        _record_llm_usage("anthropic", slug, anth_in, anth_out, "provider_api")
+                    else:
+                        _extract_provider_usage("anthropic", slug, None, full_in_text, "".join(acc_text))
                     return
             except Exception:
                 if yielded_any:
+                    _extract_provider_usage("anthropic", slug, None, full_in_text, "".join(acc_text))
                     return
                 continue
         return
@@ -1129,6 +1276,14 @@ def reshape_user_prompt(
                     else f"Expanded domain concepts and synonyms via {model_name} ({provider})."
                 )
 
+                reshaper_usage = _consume_last_llm_usage() or {
+                    "inputTokens": estimate_token_count(llm_system + safe_user_prompt),
+                    "outputTokens": estimate_token_count(external_raw),
+                    "totalTokens": estimate_token_count(llm_system + safe_user_prompt) + estimate_token_count(external_raw),
+                    "provider": provider,
+                    "model": model_name,
+                    "source": "estimated",
+                }
                 return {
                     "originalPrompt": cleaned_input,
                     "detectedIntent": detected_intent,
@@ -1139,15 +1294,18 @@ def reshape_user_prompt(
                     "hydeDocument": f"{hyde_str} {' '.join(inferred_domain_terms[:6])}".strip()[:900],
                     "extractedEntities": list(dict.fromkeys(extracted_entities + inferred_domain_terms[:4]))[:10],
                     "reasoningTrace": trace_str,
-                    "modelUsed": model_name,
-                    "providerUsed": provider,
+                    "modelUsed": reshaper_usage.get("model") or model_name,
+                    "providerUsed": reshaper_usage.get("provider") or provider,
                     "latencyMs": max(12, int(round((time.time() - t0) * 1000))),
                     "clarityScoreBefore": min(76, max(42, 45 + word_count * 2)),
                     "clarityScoreAfter": 96,
+                    "tokenUsage": reshaper_usage,
                 }
         except Exception:
+            _consume_last_llm_usage()
             pass
 
+    _consume_last_llm_usage()
     core_subject = " ".join(extracted_entities) if extracted_entities else cleaned_input
     reshaped_primary = f"{cleaned_input} {expansion_context}".strip() if expansion_context else cleaned_input
     step_back = f"Governing rules, eligibility criteria, waiting periods, and exclusions for {core_subject}"
@@ -1160,6 +1318,8 @@ def reshape_user_prompt(
 
     clarity_before = min(78, max(38, 42 + len(extracted_entities) * 6))
     clarity_after = min(98, clarity_before + 24)
+    local_in_tok = estimate_token_count(cleaned_input)
+    local_out_tok = estimate_token_count(reshaped_primary + " " + hyde_doc)
 
     return {
         "originalPrompt": cleaned_input,
@@ -1179,6 +1339,14 @@ def reshape_user_prompt(
         "latencyMs": max(8, int(round((time.time() - t0) * 1000))),
         "clarityScoreBefore": clarity_before,
         "clarityScoreAfter": clarity_after,
+        "tokenUsage": {
+            "inputTokens": local_in_tok,
+            "outputTokens": local_out_tok,
+            "totalTokens": local_in_tok + local_out_tok,
+            "provider": "builtin_local",
+            "model": active_model_label,
+            "source": "estimated",
+        },
     }
 
 
@@ -1448,6 +1616,7 @@ def _finalize_synthesis_and_verify(
     prompt_reshape: Dict[str, Any],
     timings: Dict[str, int],
     answer_gen_ms: int,
+    generator_usage: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     # Self-RAG Claim Verification (Verifies actual claims from the generated answer against retrieved chunks)
     t_ver = time.time()
@@ -1594,10 +1763,36 @@ def _finalize_synthesis_and_verify(
         + verify_ms
     )
 
+    reshaper_usage = prompt_reshape.get("tokenUsage") or {
+        "inputTokens": estimate_token_count(prompt_reshape.get("originalPrompt", "")),
+        "outputTokens": estimate_token_count(prompt_reshape.get("reshapedPrimaryQuery", "")),
+        "totalTokens": estimate_token_count(prompt_reshape.get("originalPrompt", "")) + estimate_token_count(prompt_reshape.get("reshapedPrimaryQuery", "")),
+        "provider": prompt_reshape.get("providerUsed") or "builtin_local",
+        "model": prompt_reshape.get("modelUsed") or "local",
+        "source": "estimated",
+    }
+    gen_usage = generator_usage or {
+        "inputTokens": estimate_token_count(prompt_reshape.get("originalPrompt", "")) + sum(estimate_token_count(str(c.get("content") or "")) for c in retrieved_chunks),
+        "outputTokens": estimate_token_count(answer),
+        "totalTokens": estimate_token_count(prompt_reshape.get("originalPrompt", "")) + sum(estimate_token_count(str(c.get("content") or "")) for c in retrieved_chunks) + estimate_token_count(answer),
+        "provider": "builtin_local",
+        "model": "extractive-local",
+        "source": "estimated",
+    }
+    total_in = int(reshaper_usage.get("inputTokens") or 0) + int(gen_usage.get("inputTokens") or 0)
+    total_out = int(reshaper_usage.get("outputTokens") or 0) + int(gen_usage.get("outputTokens") or 0)
+
     return {
         "answer": answer,
         "citations": citations,
         "claimVerifications": claim_verifications,
+        "tokenUsage": {
+            "reshaper": reshaper_usage,
+            "generator": gen_usage,
+            "totalInputTokens": total_in,
+            "totalOutputTokens": total_out,
+            "totalTokens": total_in + total_out,
+        },
         "metrics": {
             "contextPrecisionAtK": precision_at_k,
             "contextRecallAtK": recall_at_k,
@@ -1652,10 +1847,21 @@ def synthesize_answer_and_verify(
         recent_history=recent_history,
     )
 
+    gen_usage: Optional[Dict[str, Any]] = None
     if bundle["isGreeting"]:
         answer = bundle["greetingAnswer"]
         citations = []
         used_chunks: List[Dict[str, Any]] = []
+        g_in = estimate_token_count(original_prompt)
+        g_out = estimate_token_count(answer)
+        gen_usage = {
+            "inputTokens": g_in,
+            "outputTokens": g_out,
+            "totalTokens": g_in + g_out,
+            "provider": "builtin_local",
+            "model": "greeting-fastpath",
+            "source": "estimated",
+        }
     else:
         citations = bundle["citations"]
         used_chunks = bundle["retrievedChunks"]
@@ -1667,15 +1873,44 @@ def synthesize_answer_and_verify(
             config=config,
             history_messages=bundle["historyMessages"],
         )
+        captured_usage = _consume_last_llm_usage()
         if external_ans and len(external_ans.strip()) > 20:
             answer = external_ans.strip()
+            gen_usage = captured_usage or {
+                "inputTokens": estimate_token_count(bundle["systemPrompt"] + bundle["userPrompt"]),
+                "outputTokens": estimate_token_count(answer),
+                "totalTokens": estimate_token_count(bundle["systemPrompt"] + bundle["userPrompt"]) + estimate_token_count(answer),
+                "provider": bundle["genProvider"],
+                "model": bundle["genModel"],
+                "source": "estimated",
+            }
         elif not used_chunks:
             answer = (
                 "No indexed document sections matched this query. "
                 "Try rephrasing your question or uploading the relevant document in Document & OCR Ingest."
             )
+            g_in = estimate_token_count(original_prompt)
+            g_out = estimate_token_count(answer)
+            gen_usage = {
+                "inputTokens": g_in,
+                "outputTokens": g_out,
+                "totalTokens": g_in + g_out,
+                "provider": "builtin_local",
+                "model": "extractive-local",
+                "source": "estimated",
+            }
         else:
             answer = _build_extractive_direct_answer(original_prompt, used_chunks)
+            g_in = estimate_token_count(bundle["userPrompt"])
+            g_out = estimate_token_count(answer)
+            gen_usage = {
+                "inputTokens": g_in,
+                "outputTokens": g_out,
+                "totalTokens": g_in + g_out,
+                "provider": "builtin_local",
+                "model": "extractive-local",
+                "source": "estimated",
+            }
 
         if bundle["flaggedInjectionSources"]:
             answer += (
@@ -1692,6 +1927,7 @@ def synthesize_answer_and_verify(
         prompt_reshape=prompt_reshape,
         timings=timings,
         answer_gen_ms=answer_gen_ms,
+        generator_usage=gen_usage,
     )
 
 
@@ -1720,10 +1956,21 @@ def stream_synthesize_answer_and_verify(
         recent_history=recent_history,
     )
 
+    gen_usage: Optional[Dict[str, Any]] = None
     if bundle["isGreeting"]:
         answer = bundle["greetingAnswer"]
         citations: List[Dict[str, Any]] = []
         used_chunks: List[Dict[str, Any]] = []
+        g_in = estimate_token_count(original_prompt)
+        g_out = estimate_token_count(answer)
+        gen_usage = {
+            "inputTokens": g_in,
+            "outputTokens": g_out,
+            "totalTokens": g_in + g_out,
+            "provider": "builtin_local",
+            "model": "greeting-fastpath",
+            "source": "estimated",
+        }
         yield ("citations", citations)
         # Stream greeting smoothly in natural word chunks
         tokens = re.findall(r"\S+\s*", answer)
@@ -1747,9 +1994,18 @@ def stream_synthesize_answer_and_verify(
             collected.append(delta)
             yield ("token", delta)
 
+        captured_usage = _consume_last_llm_usage()
         streamed_text = "".join(collected).strip()
         if len(streamed_text) > 20:
             answer = streamed_text
+            gen_usage = captured_usage or {
+                "inputTokens": estimate_token_count(bundle["systemPrompt"] + bundle["userPrompt"]),
+                "outputTokens": estimate_token_count(answer),
+                "totalTokens": estimate_token_count(bundle["systemPrompt"] + bundle["userPrompt"]) + estimate_token_count(answer),
+                "provider": bundle["genProvider"],
+                "model": bundle["genModel"],
+                "source": "estimated",
+            }
         else:
             if not used_chunks:
                 answer = (
@@ -1758,6 +2014,16 @@ def stream_synthesize_answer_and_verify(
                 )
             else:
                 answer = _build_extractive_direct_answer(original_prompt, used_chunks)
+            g_in = estimate_token_count(bundle["userPrompt"])
+            g_out = estimate_token_count(answer)
+            gen_usage = {
+                "inputTokens": g_in,
+                "outputTokens": g_out,
+                "totalTokens": g_in + g_out,
+                "provider": "builtin_local",
+                "model": "extractive-local",
+                "source": "estimated",
+            }
             # Stream fallback extractive answer smoothly
             tokens = re.findall(r"\S+\s*", answer)
             for i in range(0, len(tokens), 4):
@@ -1781,5 +2047,6 @@ def stream_synthesize_answer_and_verify(
         prompt_reshape=prompt_reshape,
         timings=timings,
         answer_gen_ms=answer_gen_ms,
+        generator_usage=gen_usage,
     )
     yield ("result", final_result)
