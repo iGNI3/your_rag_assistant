@@ -65,6 +65,16 @@ flowchart TD
    - Streams real-time stage events (`stage`, `retrieval`), live token deltas (`token`), and finalized telemetry (`done`) over **Server-Sent Events (`POST /api/query/stream`)** so Markdown tables, headings, and inline `[Source X]` citations type out live in the UI.
    - Immediately after streaming completes (**0 ms impact on Time-To-First-Token**), runs **1 single batched LLM Self-RAG entailment judge call** via the fast Reshaper model (`_verify_claims_via_llm_judge()`) to classify every claim as `SUPPORTED`, `PARTIALLY_SUPPORTED`, `CONTRADICTED`, or `UNVERIFIED` against the cited evidence (automatically falling back to zero-token lexical grounding when offline or rate-limited), followed by evaluation metrics (`NDCG@K`, `MRR`, `Groundedness`, `Optimization Index`).
 
+### Quota-Resilient Automatic Fallback Cascade (Zero-Crash Design)
+Every API-backed stage in `RAG_BUDDY` is user-configurable in **Settings -> Model Selection** and includes automatic, silent fallback on `429` rate limits, exhausted token quotas, invalid/missing keys, timeouts, or network errors:
+
+| Pipeline Stage | Configurable Modes (Settings UI) | Automatic Fallback Chain on Quota Exhaustion / Error |
+| :--- | :--- | :--- |
+| **Neural Cross-Encoder Reranker** (`backend/reranker.py`) | `Auto Cascade` *(default)*, `Cohere v3.5`, `Jina v2`, `Local FlashRank ONNX`, `Deterministic Lexical` | `Cohere Rerank v3.5` -> `Jina Reranker v2` *(in Auto)* -> **Local `FlashRank` ONNX** (`ms-marco-TinyBERT-L-2-v2`, ~4 MB, zero API tokens) -> `Deterministic Lexical`. Even if Cohere or Jina is explicitly selected and hits a `429` quota limit, it automatically falls back to local `FlashRank` ONNX and retries without failing the query. |
+| **Self-RAG Claim Verifier** (`backend/llm_engine.py`) | `Batched Small-LLM Judge` *(default, reuses Reshaper key)*, `Zero-Token Lexical Only` | `Batched Small-LLM Entailment Judge` (1 JSON call post-stream, 0 ms TTFT impact) -> **Zero-Token Lexical Grounding** if the Reshaper LLM hits `429`, times out, or is offline. |
+| **Neural Embeddings** (`backend/reranker.py` + `vectordb.py`) | Automatic when Gemini key is saved | `gemini-embedding-001` (128-dim Matryoshka REST) -> **Local Deterministic Semantic Hash Embeddings**, with per-chunk `embeddingModel` space-matching so neural and fallback chunks never collide. |
+| **Main Generator LLM** (`backend/llm_engine.py`) | Gemini / OpenAI / Groq / OpenRouter / Anthropic / Ollama / LM Studio / Built-in | Slug-normalized model retries -> **Built-in Extractive Grounded Synthesizer** so answers still complete offline. |
+
 ---
 
 ## 3. Why We Chose NOT to Use LangChain
@@ -243,7 +253,7 @@ Exposes all HTTP endpoints, enforces per-user authentication, and wires the full
 | `src/App.tsx` | `fetchFullState()`, `fetchAnalytics()`, `handleExecuteQuery()`, `handleCreateChat()`, `handleSelectChat()`, `handleRenameChat()`, `handleDeleteChat()`, `handleUploadFiles()` | Manages auth state, 10-page studio navigation, theme/palette switching, and the sidebar **Chat History** panel. |
 | `src/pages/AnalyticsDashboardPage.tsx` | `AnalyticsDashboardPage`, `InteractiveDonutChart` | Renders the per-user **Usage & Token Dashboard**: real provider/estimated token KPIs, interactive SVG Pie/Donut charts (chunking techniques & token stages/providers), token usage trend area/line graph, chunks/tokens-per-file bar chart, format/OCR mix bar, and searchable/sortable per-document technique audit table. |
 | `src/pages/ChatHomePage.tsx` | `openSourcePreviewModal()`, `restoreDocumentStructure()`, `parseStructuredTableRow()`, `parsePageIntoBlocks()`, `findPassageCharRange()` | Renders the conversational chat thread, 4-stage live answering animation, SSE token streaming, and the **Floating Full Document Reader** with multi-line PDF table unwrapping, structured HTML table rendering, and exact offset-based inline/row highlighting. |
-| `src/pages/SettingsPage.tsx` | `SettingsPage` | Configures LLM provider/model, encrypted/masked LLM API keys, optional **Cohere Rerank v3.5** & **Jina Reranker v2** API keys, RAG hyperparameters, and account settings. |
+| `src/pages/SettingsPage.tsx` | `SettingsPage` | Configures LLM provider/model, **Cross-Encoder Reranker Engine** (`Auto Cascade` / `Cohere v3.5` / `Jina v2` / `Local FlashRank ONNX` / `Deterministic Lexical`), **Self-RAG Claim Verifier Mode** (`Batched Small-LLM Judge` / `Zero-Token Lexical Only`), encrypted/masked LLM & Cohere/Jina API keys, RAG hyperparameters, and account settings. |
 | `src/components/RichMarkdownRenderer.tsx` | `renderInlineTokens()`, `normalizeContentForTables()`, `isPipeTableRow()`, `parseChatStructuredRow()` | Renders chat answers with clickable `[SOURCE X]` citation hover-tooltip pills, copyable code blocks, Markdown pipe tables, and structured policy tables. |
 
 ---
