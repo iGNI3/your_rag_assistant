@@ -108,12 +108,20 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [reshaperModel, setReshaperModel] = useState(config.reshaperModel);
   const [generatorProvider, setGeneratorProvider] = useState(config.generatorProvider);
   const [generatorModel, setGeneratorModel] = useState(config.generatorModel);
+  const [rerankerEngine, setRerankerEngine] = useState<
+    NonNullable<RagPipelineConfig['rerankerEngine']>
+  >(config.rerankerEngine || 'auto');
+  const [selfRagVerifierMode, setSelfRagVerifierMode] = useState<
+    NonNullable<RagPipelineConfig['selfRagVerifierMode']>
+  >(config.selfRagVerifierMode || 'llm_judge');
   const [apiKeys, setApiKeys] = useState({
     openai: config.apiKeys.openai || '',
     gemini: config.apiKeys.gemini || '',
     anthropic: config.apiKeys.anthropic || '',
     groq: config.apiKeys.groq || '',
     openrouter: config.apiKeys.openrouter || '',
+    cohere: config.apiKeys.cohere || '',
+    jina: config.apiKeys.jina || '',
   });
   const [ollamaUrl, setOllamaUrl] = useState(
     config.localEndpoints.ollamaUrl || 'http://localhost:11434'
@@ -228,6 +236,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       reshaperModel,
       generatorProvider,
       generatorModel,
+      rerankerEngine,
+      selfRagVerifierMode,
       apiKeys,
       localEndpoints: { ollamaUrl, lmStudioUrl },
       offlineModelPath: scanInputPath,
@@ -796,6 +806,123 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   </datalist>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div className="grid-2" style={{ marginBottom: 18 }}>
+            {/* Cross-Encoder Reranker Engine */}
+            <div className="clay-card-alt">
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 12,
+                }}
+              >
+                <span className="clay-tag clay-tag-cobalt">
+                  <span>CROSS-ENCODER RERANKER + CRAG</span>
+                </span>
+                <span className="clay-tag">PRE-LLM GATE</span>
+              </div>
+              <p
+                style={{
+                  fontSize: '0.8rem',
+                  color: 'var(--ink-secondary)',
+                  marginBottom: 12,
+                }}
+              >
+                Choose which neural Cross-Encoder scores retrieved passages and drives
+                calibrated CRAG noise pruning. Add Cohere or Jina keys in the API Keys
+                Vault tab if selecting an API reranker.
+              </p>
+              <label
+                className="font-mono"
+                style={{
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                  display: 'block',
+                  marginBottom: 5,
+                }}
+              >
+                RERANKER ENGINE
+              </label>
+              <select
+                className="clay-select"
+                value={rerankerEngine}
+                onChange={(e) =>
+                  setRerankerEngine(
+                    e.target.value as NonNullable<RagPipelineConfig['rerankerEngine']>
+                  )
+                }
+              >
+                <option value="auto">
+                  Auto Cascade (Cohere v3.5 -&gt; Jina v2 -&gt; FlashRank ONNX)
+                </option>
+                <option value="cohere">Cohere Rerank v3.5 API (Requires Cohere Key)</option>
+                <option value="jina">Jina Reranker v2 API (Requires Jina Key)</option>
+                <option value="flashrank">
+                  Local FlashRank ONNX (TinyBERT ~4 MB, Zero-Token)
+                </option>
+                <option value="lexical">Deterministic Lexical Only (Zero-Token)</option>
+              </select>
+            </div>
+
+            {/* Post-Stream Self-RAG Claim Verifier */}
+            <div className="clay-card-alt">
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 12,
+                }}
+              >
+                <span className="clay-tag clay-tag-sage">
+                  <span>SELF-RAG CLAIM VERIFIER</span>
+                </span>
+                <span className="clay-tag">POST-STREAM</span>
+              </div>
+              <p
+                style={{
+                  fontSize: '0.8rem',
+                  color: 'var(--ink-secondary)',
+                  marginBottom: 12,
+                }}
+              >
+                Runs after SSE streaming finishes (0 ms TTFT impact). Small-LLM Judge
+                reuses your Reshaper model &amp; key in 1 batched call to catch
+                contradictions and numeric mismatches.
+              </p>
+              <label
+                className="font-mono"
+                style={{
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                  display: 'block',
+                  marginBottom: 5,
+                }}
+              >
+                VERIFICATION MODE
+              </label>
+              <select
+                className="clay-select"
+                value={selfRagVerifierMode}
+                onChange={(e) =>
+                  setSelfRagVerifierMode(
+                    e.target.value as NonNullable<
+                      RagPipelineConfig['selfRagVerifierMode']
+                    >
+                  )
+                }
+              >
+                <option value="llm_judge">
+                  Batched Small-LLM Judge (Recommended, Reuses Reshaper Key)
+                </option>
+                <option value="lexical_only">
+                  Zero-Token Lexical Grounding Only
+                </option>
+              </select>
             </div>
           </div>
 

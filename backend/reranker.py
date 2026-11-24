@@ -92,12 +92,16 @@ def rerank_passages_neural(
     if not query.strip() or not candidates:
         return None, "deterministic_lexical"
 
+    preferred = str((config or {}).get("rerankerEngine") or "auto").lower().strip()
+    if preferred == "lexical":
+        return None, "deterministic_lexical"
+
     docs_texts = [str(c.get("content") or "")[:1800] for c in candidates]
     chunk_ids = [str(c.get("id") or "") for c in candidates]
 
     # Tier 1: Cohere Rerank v3.5 API
     cohere_key = _get_provider_key("cohere", config)
-    if cohere_key:
+    if preferred in ("auto", "cohere") and cohere_key:
         res = _http_post_json(
             "https://api.cohere.com/v2/rerank",
             {
@@ -122,7 +126,7 @@ def rerank_passages_neural(
 
     # Tier 2: Jina Reranker v2 Multilingual API
     jina_key = _get_provider_key("jina", config)
-    if jina_key:
+    if preferred in ("auto", "jina") and jina_key:
         res = _http_post_json(
             "https://api.jina.ai/v1/rerank",
             {

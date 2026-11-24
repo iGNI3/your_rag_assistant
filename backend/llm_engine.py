@@ -1620,6 +1620,8 @@ def _verify_claims_via_llm_judge(
     """
     if not candidate_claims or not retrieved_chunks or not isinstance(config, dict):
         return None
+    if str(config.get("selfRagVerifierMode") or "llm_judge").lower().strip() == "lexical_only":
+        return None
 
     judge_provider = config.get("reshaperProvider", "builtin_local")
     judge_model = config.get("reshaperModel", "")

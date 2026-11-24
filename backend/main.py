@@ -185,6 +185,8 @@ def get_default_config() -> Dict[str, Any]:
             "anthropic": "",
             "groq": "",
             "openrouter": "",
+            "cohere": "",
+            "jina": "",
         },
         "localEndpoints": {
             "ollamaUrl": "http://localhost:11434",
@@ -204,6 +206,8 @@ def get_default_config() -> Dict[str, Any]:
         "enableMultiQuery": True,
         "enableStepBack": True,
         "enableCrossEncoderRerank": True,
+        "rerankerEngine": "auto",
+        "selfRagVerifierMode": "llm_judge",
         "enableCragFilter": True,
         "cragThreshold": 0.34,
     }

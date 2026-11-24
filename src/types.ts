@@ -262,6 +262,8 @@ export interface RagPipelineConfig {
   enableMultiQuery: boolean;
   enableStepBack: boolean;
   enableCrossEncoderRerank: boolean;
+  rerankerEngine?: 'auto' | 'cohere' | 'jina' | 'flashrank' | 'lexical';
+  selfRagVerifierMode?: 'llm_judge' | 'lexical_only';
   enableCragFilter: boolean;
   cragThreshold: number;
 }
